@@ -594,6 +594,141 @@ export function causticTexture() {
   return track(tex(c, { srgb: false }));
 }
 
+// ---------------------------------------------------------------- butterfly wing
+// One wing pair (fore + hind) of one side, drawn body→tip along U. The
+// membrane is near-white so per-instance tints stay saturated; the alpha
+// channel carves the scalloped silhouette out of the trapezoid quad. The
+// far-left column (u < 0.045) is a dark strip the body quads sample.
+export function butterflyWingTexture() {
+  const S = 256;
+  const rand = mulberry32(83);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.clearRect(0, 0, S, S);
+
+  // body strip
+  const bg = ctx.createLinearGradient(0, 0, 0, S);
+  bg.addColorStop(0, '#2c2018');
+  bg.addColorStop(0.5, '#4a3624');
+  bg.addColorStop(1, '#241a12');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, S * 0.045, S);
+
+  // wing silhouette: forewing sweep, a notch, then the hindwing lobe
+  const P = [
+    [0.05, 0.30], [0.45, 0.13], [0.82, 0.05], [0.965, 0.10], // leading edge
+    [0.90, 0.30], [0.86, 0.44],                              // forewing tip edge
+    [0.66, 0.50], [0.58, 0.53],                              // notch
+    [0.74, 0.66], [0.70, 0.82],                              // hindwing bulge
+    [0.52, 0.93], [0.34, 0.97], [0.20, 0.90],                // scalloped trail
+    [0.05, 0.78],
+  ];
+  const path = new Path2D();
+  path.moveTo(P[0][0] * S, P[0][1] * S);
+  for (let i = 1; i < P.length; i++) {
+    const [x0, y0] = P[i - 1], [x1, y1] = P[i];
+    // soft scallops: bow each segment outward a touch
+    const mx = ((x0 + x1) / 2 + (y1 - y0) * 0.10) * S;
+    const my = ((y0 + y1) / 2 - (x1 - x0) * 0.10) * S;
+    path.quadraticCurveTo(mx, my, x1 * S, y1 * S);
+  }
+  path.closePath();
+
+  // membrane: warm near-white, dimming a little toward the outer edge
+  const mg = ctx.createRadialGradient(S * 0.08, S * 0.5, S * 0.05, S * 0.08, S * 0.5, S * 1.05);
+  mg.addColorStop(0, '#fdf6e6');
+  mg.addColorStop(0.55, '#f4ecd8');
+  mg.addColorStop(1, '#ddd2ba');
+  ctx.fillStyle = mg;
+  ctx.fill(path);
+
+  ctx.save();
+  ctx.clip(path);
+
+  // dark basal region where the wing meets the body
+  const base = ctx.createRadialGradient(S * 0.045, S * 0.5, 0, S * 0.045, S * 0.5, S * 0.34);
+  base.addColorStop(0, 'rgba(46,32,22,0.95)');
+  base.addColorStop(0.45, 'rgba(46,32,22,0.4)');
+  base.addColorStop(1, 'rgba(46,32,22,0)');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, S, S);
+
+  // veins fanning from the base, with a slight arc
+  ctx.strokeStyle = 'rgba(52,38,26,0.5)';
+  ctx.lineWidth = 2.2;
+  for (const [tx, ty] of [
+    [0.94, 0.12], [0.90, 0.26], [0.86, 0.40], [0.62, 0.51],
+    [0.72, 0.64], [0.68, 0.79], [0.50, 0.91], [0.32, 0.95],
+  ]) {
+    ctx.beginPath();
+    ctx.moveTo(S * 0.06, S * 0.5);
+    ctx.quadraticCurveTo(S * (tx * 0.5 + 0.06), S * (ty * 0.62 + 0.17), S * tx, S * ty);
+    ctx.stroke();
+  }
+  // fine cross-veins near the margin
+  ctx.strokeStyle = 'rgba(52,38,26,0.28)';
+  ctx.lineWidth = 1.3;
+  for (let i = 0; i < 9; i++) {
+    const a0 = 0.12 + i * 0.095 + rand() * 0.03;
+    ctx.beginPath();
+    ctx.moveTo(S * (0.60 + rand() * 0.12), S * a0);
+    ctx.lineTo(S * (0.74 + rand() * 0.16), S * (a0 + 0.05));
+    ctx.stroke();
+  }
+
+  // eyespots: one bold on the hindwing, one small on the forewing
+  const spot = (x, y, r) => {
+    ctx.fillStyle = 'rgba(40,28,20,0.92)';
+    ctx.beginPath(); ctx.arc(S * x, S * y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(228,206,150,0.9)';
+    ctx.beginPath(); ctx.arc(S * x, S * y, r * 0.55, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(35,25,18,0.95)';
+    ctx.beginPath(); ctx.arc(S * x, S * y, r * 0.30, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,252,240,0.95)';
+    ctx.beginPath(); ctx.arc(S * (x - 0.012), S * (y - 0.014), r * 0.13, 0, Math.PI * 2); ctx.fill();
+  };
+  spot(0.60, 0.70, S * 0.062);
+  spot(0.78, 0.24, S * 0.034);
+
+  // dark margin band just inside the edge, with pale accent dots
+  ctx.strokeStyle = 'rgba(38,28,22,0.85)';
+  ctx.lineWidth = S * 0.055;
+  ctx.stroke(path);
+  ctx.fillStyle = 'rgba(250,244,226,0.85)';
+  for (const [dx, dy] of [[0.90, 0.145], [0.865, 0.315], [0.71, 0.60], [0.63, 0.855], [0.43, 0.935]]) {
+    ctx.beginPath();
+    ctx.arc(S * dx, S * dy, S * 0.011, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // crisp dark rim (drawn unclipped so it plumps the silhouette slightly)
+  ctx.strokeStyle = 'rgba(30,22,17,0.9)';
+  ctx.lineWidth = 2.5;
+  ctx.stroke(path);
+
+  const t = tex(c, { repeat: false });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return track(t);
+}
+
+// ---------------------------------------------------------------- soft glow dot
+// Round radial glow for point sprites: firefly lanterns, the volcano's
+// crater ember. White core so material/vertex colors do the tinting.
+export function glowDotTexture() {
+  const S = 64;
+  const [c, ctx] = makeCanvas(S, S);
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+  g.addColorStop(0.6, 'rgba(255,255,255,0.13)');
+  g.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  const t = tex(c, { repeat: false });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return track(t);
+}
+
 // ---------------------------------------------------------------- cloud puff sprite
 export function cloudTexture(seed = 71) {
   const S = 256;
