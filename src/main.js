@@ -9,7 +9,10 @@ import {
   writeSeedParam, clearSeedParam,
 } from './core/seed.js';
 import { mulberry32 } from './core/rng.js';
-import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland } from './world/island.js';
+import {
+  buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland, lagoonInfo,
+} from './world/island.js';
+import { buildPond } from './world/pond.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
@@ -69,6 +72,9 @@ function buildWorldNow() {
   const ocean = buildOcean(heightTex);
   scene.add(ocean.group);
   sky.attachWater(ocean.material);
+  const pond = buildPond();
+  scene.add(pond.group);
+  sky.attachPond(pond.material);
   const palms = buildPalms();
   scene.add(palms.group);
   const scatterG = buildScatter();
@@ -79,7 +85,7 @@ function buildWorldNow() {
   scene.add(fish.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
-  return { terrain, heightTex, ocean, palms, scatterG, crabs, fish };
+  return { terrain, heightTex, ocean, pond, palms, scatterG, crabs, fish };
 }
 
 function disposeDeep(obj) {
@@ -117,7 +123,7 @@ function applySeedMood() {
 function rebuildWorld() {
   if (world) {
     for (const obj of [
-      world.terrain, world.ocean.group, world.palms.group,
+      world.terrain, world.ocean.group, world.pond.group, world.palms.group,
       world.scatterG, world.crabs.group, world.fish.group,
     ]) {
       scene.remove(obj);
@@ -168,19 +174,22 @@ seedToggle.addEventListener('change', () => {
   rebuildWorld();
 });
 
-regenBtn.addEventListener('click', () => {
-  // drop focus, or the next Space (jump) would re-trigger the button
-  regenBtn.blur();
+// ⟳ / R lives in the world, not on the title screen (which has its own
+// seed controls), so it only appears once you've walked out onto the beach
+function regenerateIsland() {
+  regenBtn.blur(); // drop focus, or the next Space (jump) re-triggers the button
   regenBtn.classList.remove('spun');
   void regenBtn.offsetWidth; // restart the glyph spin
   regenBtn.classList.add('spun');
   setSeed(randomSeed());
   writeSeedParam(getSeed());
   rebuildWorld();
-});
+}
+regenBtn.addEventListener('click', regenerateIsland);
 
 function enterWorld(withTouch = false) {
   overlay.classList.add('hidden');
+  regenBtn.classList.remove('hidden');
   player.enabled = true;
   audio.start();
   if (withTouch) touchUI.show();
@@ -200,6 +209,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') {
     audio.setMuted(!audio.muted);
     muteBtn.textContent = audio.muted ? '🔇' : '🔊';
+  } else if (e.code === 'KeyR' && player.enabled) {
+    regenerateIsland();
   }
 });
 muteBtn.addEventListener('click', () => {
@@ -280,6 +291,16 @@ window.__beach = {
     level: +uniforms.uTide.value.toFixed(3),
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
+  lagoon: () => lagoonInfo(),
+  // stand on the lagoon bank looking across the water
+  pondside(bearing = 0.9) {
+    const L = lagoonInfo();
+    if (!L) return 'this island has no lagoon';
+    const d = L.rW * 1.5;
+    const x = L.x + Math.cos(bearing) * d, z = L.z + Math.sin(bearing) * d;
+    this.teleport(x, z, Math.atan2(-(L.x - x), -(L.z - z)), -0.12);
+    return { center: [+L.x.toFixed(1), +L.z.toFixed(1)], level: +L.level.toFixed(2) };
+  },
   rain: (on = true) => weather.rain(on),
   snap() { window.__snapReq = true; }, // grab the next rendered frame to window.__cap
   // lay a test track of prints marching down the beach into the surge zone

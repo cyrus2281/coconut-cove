@@ -3,7 +3,7 @@
 // function, wading slowdown in the shallows, and a soft head-bob.
 
 import * as THREE from 'three';
-import { islandHeight, shoreRadius } from './world/island.js';
+import { islandHeight, shoreRadius, waterLevelAt } from './world/island.js';
 import { runupNow, runupVel, ZONES } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
@@ -126,10 +126,11 @@ export class Player {
     const dir = new THREE.Vector3(-sy * fwd + cy * strafe, 0, -cy * fwd - sy * strafe);
     if (dir.lengthSq() > 1) dir.normalize();
 
-    // wading drag (against the live, tide-shifted waterline)
+    // wading drag. `tide` is the sea (the swash model below is a sea thing);
+    // `water` is whatever stands underfoot, so the lagoon wades like the sea.
     const tide = uniforms.uTide.value;
     const ground = islandHeight(this.pos.x, this.pos.z);
-    const submersion = Math.max(0, tide - ground);
+    const submersion = Math.max(0, waterLevelAt(this.pos.x, this.pos.z) - ground);
     const drag = 1 / (1 + submersion * 1.1);
 
     // surge push: standing in the swash sheet, the bore carries you up the
@@ -163,7 +164,7 @@ export class Player {
     }
 
     // integrate with axis-slide so deep water blocks like a soft wall
-    const tryMove = (nx, nz) => islandHeight(nx, nz) > tide - MAX_WADE_DEPTH;
+    const tryMove = (nx, nz) => islandHeight(nx, nz) > waterLevelAt(nx, nz) - MAX_WADE_DEPTH;
     const px0 = this.pos.x, pz0 = this.pos.z;
     let nx = this.pos.x + this.vel.x * dt;
     let nz = this.pos.z + this.vel.z * dt;
@@ -200,7 +201,9 @@ export class Player {
         const fx = this.pos.x - mx * 0.24 - mz * lat;
         const fz = this.pos.z - mz * 0.24 + mx * lat;
         const fh = islandHeight(fx, fz);
-        if (this.onStep && fh > tide - 0.06) this.onStep(fx, fz, fh, mx, mz, this.stepSide);
+        if (this.onStep && fh > waterLevelAt(fx, fz) - 0.06) {
+          this.onStep(fx, fz, fh, mx, mz, this.stepSide);
+        }
       }
     } else if (!this.grounded) {
       this.strideAcc = 0.45; // land mid-stride

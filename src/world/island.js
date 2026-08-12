@@ -12,7 +12,7 @@ import { sandTextures, causticTexture, foamTexture } from '../core/textures.js';
 
 // Everything that defines this island's shape lives in these lets and is
 // regrown from the master seed by reseedIsland().
-let noise, BASE_R, LOBES, CAY_POS;
+let noise, BASE_R, LOBES, CAY_POS, LAGOON;
 
 // Lobed shoreline: nominal water's-edge radius for a given angle.
 export function shoreRadius(theta) {
@@ -39,14 +39,87 @@ export function reseedIsland() {
   const cayAz = r() * Math.PI * 2;
   const cayR = shoreRadius(cayAz) + 35 + r() * 6;
   CAY_POS = { x: Math.cos(cayAz) * cayR, z: Math.sin(cayAz) * cayR };
+  reseedLagoon();
+}
+
+// A freshwater lagoon in the island's interior: a dish scooped out of the
+// lowest inland hollow, ringed by a low dune berm. Hunting for a naturally
+// walled hollow finds nothing on most seeds, so we sculpt the rim instead —
+// the berm only rises where the dunes don't already stand above the water,
+// which keeps the pond from reading as water hanging over lower ground.
+function reseedLagoon() {
+  LAGOON = null; // islandHeight() must run un-carved while we scout for a site
+  const lr = mulberry32(subSeed('lagoon'));
+  const rW = 6.4 + lr() * 2.4;        // radius of standing water
+  const depth = 0.8 + lr() * 0.28;    // at the deepest point
+  const w1 = lr() * Math.PI * 2, w2 = lr() * Math.PI * 2;
+  const rOuter = rW * 1.75;           // dish + berm footprint
+
+  // lowest interior ground with room to spare from the beach: water gathers
+  // in the dips, and a basin near the shore would breach into the sea
+  let best = null;
+  for (let i = 0; i < 300; i++) {
+    const az = lr() * Math.PI * 2;
+    const rr = Math.sqrt(lr()) * 16;
+    const x = Math.cos(az) * rr, z = Math.sin(az) * rr;
+    const inland = shoreRadius(Math.atan2(z, x)) - Math.hypot(x, z);
+    if (inland < rOuter + 10) continue;
+    const h = islandHeight(x, z);
+    if (h < 2.6) continue;            // needs elevation to hold water above the sea
+    if (!best || h < best.h) best = { x, z, h };
+  }
+  if (best) {
+    LAGOON = {
+      x: best.x, z: best.z, rW, rOuter,
+      level: best.h - 0.05,
+      depth, w1, w2,
+      rBerm: rW * 1.35,
+      wBerm: rW * 0.7,
+      hBerm: 0.55 + lr() * 0.3,
+    };
+  }
+  const L = LAGOON;
+  uniforms.uLagoon.value.set(L ? L.x : 0, L ? L.z : 0, L ? L.rOuter : 0, L ? L.level : 0);
 }
 reseedIsland();
+
+// { x, z, rW, rOuter, level, depth } for this island, or null if it has none
+export function lagoonInfo() {
+  return LAGOON ? { ...LAGOON } : null;
+}
+
+// Depth of standing fresh water at (x, z) — 0 outside the lagoon.
+export function lagoonDepth(x, z) {
+  if (!LAGOON) return 0;
+  if (Math.hypot(x - LAGOON.x, z - LAGOON.z) > LAGOON.rOuter) return 0;
+  return Math.max(0, LAGOON.level - islandHeight(x, z));
+}
+
+// How far (x, z) stands above the lagoon surface — negative underwater,
+// +Infinity outside the basin. Prop placement uses this to stay out of the
+// pond (or, for reeds, to hug its margin).
+export function lagoonFreeboard(x, z) {
+  if (!LAGOON) return Infinity;
+  if (Math.hypot(x - LAGOON.x, z - LAGOON.z) > LAGOON.rOuter) return Infinity;
+  return islandHeight(x, z) - LAGOON.level;
+}
+
+// Height of whatever water surface stands over (x, z): the tidal sea, or the
+// lagoon where it sits higher. Player physics and footprints use this so the
+// pond wades and blocks exactly like the sea does.
+export function waterLevelAt(x, z) {
+  const sea = uniforms.uTide.value;
+  if (!LAGOON) return sea;
+  if (Math.hypot(x - LAGOON.x, z - LAGOON.z) > LAGOON.rOuter) return sea;
+  return Math.max(sea, LAGOON.level);
+}
 
 // polynomial smooth-max (mirror of the usual smin)
 function smax(a, b, k) {
   const t = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
   return a * (1 - t) + b * t + k * t * (1 - t);
 }
+const smin = (a, b, k) => -smax(-a, -b, k);
 
 // World-space terrain height (y) at (x, z). Water level is y = 0.
 export function islandHeight(x, z) {
@@ -76,6 +149,30 @@ export function islandHeight(x, z) {
   if (dc < 26) {
     const p = 0.38 - 3.0 * (dc / 20) * (dc / 20);
     h = smax(h, p, 0.5);
+  }
+
+  // the interior lagoon: a dish scooped out with smooth-min so its banks
+  // blend into the dunes instead of cutting a crater lip
+  if (LAGOON) {
+    const dx = x - LAGOON.x, dz = z - LAGOON.z;
+    const dl = Math.hypot(dx, dz);
+    if (dl < LAGOON.rOuter * 1.8) {
+      const ang = Math.atan2(dz, dx);
+      // wobble the radius so the pond is kidney-shaped, not a bullseye
+      const rW = LAGOON.rW
+        * (1 + 0.15 * Math.sin(3 * ang + LAGOON.w1) + 0.08 * Math.sin(5 * ang + LAGOON.w2));
+      const u = dl / rW;
+      const out = Math.max(0, u - 1);
+      const bowl = LAGOON.level - LAGOON.depth + LAGOON.depth * u * u + 2.6 * out * out;
+      h = smin(h, bowl, 1.1);
+
+      // low dune berm just outside the waterline, wobbled so it isn't a donut.
+      // smax means it only shows up where the dunes are already too low.
+      const t = (dl - LAGOON.rBerm) / LAGOON.wBerm;
+      const berm = LAGOON.level + LAGOON.hBerm * (1 + 0.4 * Math.sin(3 * ang + LAGOON.w2))
+        - 1.8 * t * t;
+      h = smax(h, berm, 0.9);
+    }
   }
 
   // fine surface detail everywhere (fades in deep water)
@@ -154,6 +251,7 @@ export function buildTerrain() {
     shader.uniforms.uTide = uniforms.uTide;
     shader.uniforms.uTideAng = uniforms.uTideAng;
     shader.uniforms.uRainWet = uniforms.uRainWet;
+    shader.uniforms.uLagoon = uniforms.uLagoon;
     shader.uniforms.uCaustic = { value: caustics };
     shader.uniforms.uBreakup = { value: breakup };
     Object.assign(shader.uniforms, swashUniforms);
@@ -173,6 +271,7 @@ export function buildTerrain() {
       uniform float uTide;
       uniform float uTideAng;
       uniform float uRainWet;
+      uniform vec4 uLagoon;
       uniform sampler2D uCaustic;
       uniform sampler2D uBreakup;
       uniform vec4 uZone1;
@@ -214,6 +313,15 @@ export function buildTerrain() {
           wet = max(wet, 1.0 - smoothstep(0.0, 0.15, hEff)); // saturated fringe
           // rain soaks the whole island; uRainWet decays slowly after a squall
           wet = max(wet, uRainWet * (0.72 + 0.28 * macro));
+
+          // the interior lagoon has its own, permanently wet shoreline
+          float lmask = 0.0, lsub = 0.0;
+          if (uLagoon.z > 0.0) {
+            float dl = length(vWPos.xz - uLagoon.xy);
+            lmask = 1.0 - smoothstep(uLagoon.z * 0.95, uLagoon.z * 1.3, dl);
+            lsub = uLagoon.w - hAbs;           // + = under fresh water
+            wet = max(wet, lmask * smoothstep(-0.25, 0.0, lsub));
+          }
           wet = clamp(wet, 0.0, 1.0);
 
           // wet sand: much darker, slightly warm, water-saturated
@@ -232,10 +340,12 @@ export function buildTerrain() {
             * (1.0 - step(hEff, 0.01))
             * (0.25 + 0.75 * smoothstep(0.45, 0.85, fpB));
 
-          // underwater absorption tint
-          float sub = max(0.0, uTide - vWPos.y);
+          // underwater absorption tint (sea, or the lagoon standing over it)
+          float sub = max(max(0.0, uTide - vWPos.y), lmask * max(0.0, lsub));
           diffuseColor.rgb *= pow(vec3(0.66, 0.80, 0.84), vec3(min(sub * 0.55, 4.0)));
           vWetness = wet;
+          vSub = sub;
+          vLagMask = lmask;
         }`
       )
       .replace(
@@ -247,14 +357,17 @@ export function buildTerrain() {
         '#include <emissivemap_fragment>',
         `#include <emissivemap_fragment>
         {
-          // fake caustics dancing on the submerged sand
-          float sub = max(0.0, uTide - vWPos.y);
+          // fake caustics dancing on the submerged sand (sea floor or pond bed)
+          float sub = vSub;
           float cmask = smoothstep(0.05, 0.5, sub) * (1.0 - smoothstep(1.5, 7.0, sub));
           if (cmask > 0.001) {
-            vec2 cuv = vWPos.xz * 0.09;
+            // sea-scale cells are metres wide and read as debris in a pond,
+            // so fresh water gets a much finer, gentler pattern
+            vec2 cuv = vWPos.xz * mix(0.09, 0.36, vLagMask);
             float ca = texture2D(uCaustic, cuv + uTime * vec2(0.014, 0.021)).r;
             float cb = texture2D(uCaustic, cuv * 1.37 - uTime * vec2(0.019, 0.012)).r;
-            totalEmissiveRadiance += vec3(1.0, 0.97, 0.86) * (ca * cb * 1.9) * cmask * uSunI;
+            float cstr = mix(1.9, 0.8, vLagMask);
+            totalEmissiveRadiance += vec3(1.0, 0.97, 0.86) * (ca * cb * cstr) * cmask * uSunI;
           }
           // sand sparkle: sparse micro-facets that glint as the view moves
           vec3 vdir = normalize(vViewPosition);
@@ -270,10 +383,10 @@ export function buildTerrain() {
     // declare the bridge variables once, at the top of main()
     shader.fragmentShader = shader.fragmentShader.replace(
       'void main() {',
-      'float vWetness = 0.0;\nfloat vBio = 0.0;\nvoid main() {'
+      'float vWetness = 0.0;\nfloat vBio = 0.0;\nfloat vSub = 0.0;\nfloat vLagMask = 0.0;\nvoid main() {'
     );
   };
-  mat.customProgramCacheKey = () => 'cove-sand-v4';
+  mat.customProgramCacheKey = () => 'cove-sand-v6';
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;

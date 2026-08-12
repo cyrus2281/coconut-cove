@@ -118,7 +118,12 @@
       -webkit-user-select: none; user-select: none;
     }
     #regen:hover { background: rgba(255, 235, 200, 0.26); }
+    #regen.hidden { display: none; }
     #regen .glyph { font-size: 14px; line-height: 1; }
+    #regen b {
+      border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 4px;
+      padding: 1px 5px; margin-left: 3px; font-weight: normal; font-size: 11px;
+    }
     #regen.spun .glyph { animation: regenSpin 0.5s ease-out; }
     @keyframes regenSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -183,8 +188,8 @@
   <canvas id="scene"></canvas>
   <div id="vignette"></div>
 
-  <button id="regen" title="grow a brand-new island (the seed goes in the URL)">
-    <span class="glyph">⟳</span>new island
+  <button id="regen" class="hidden" title="grow a brand-new island — R (the seed goes in the URL)">
+    <span class="glyph">⟳</span>new island <b>R</b>
   </button>
 
   <div id="overlay">

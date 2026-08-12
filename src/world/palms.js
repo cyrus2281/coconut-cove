@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
 import { subSeed } from '../core/seed.js';
-import { islandHeight, shoreRadius } from './island.js';
+import { islandHeight, shoreRadius, lagoonFreeboard } from './island.js';
 import { ZONES } from './swash.js';
 import { barkTexture, leafletTexture, huskTexture } from '../core/textures.js';
 
@@ -327,7 +327,13 @@ export function buildPalms() {
   const trees = [];
   for (let i = 0; i < spots.length; i++) {
     const s = spots[i];
-    const r = shoreRadius(s.az) + s.d;
+    let r = shoreRadius(s.az) + s.d;
+    // an inland spot can land in the lagoon — walk it back toward the beach
+    // until the trunk stands on dry ground
+    for (let g = 0; g < 12; g++) {
+      if (lagoonFreeboard(Math.cos(s.az) * r, Math.sin(s.az) * r) >= 0.7) break;
+      r += 2.0;
+    }
     const x = Math.cos(s.az) * r, z = Math.sin(s.az) * r;
     const leanA = s.leanOut
       ? Math.atan2(Math.sin(s.az), Math.cos(s.az))

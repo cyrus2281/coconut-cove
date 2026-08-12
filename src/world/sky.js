@@ -297,7 +297,7 @@ export function buildSky(scene, renderer, camera) {
 
   // ---- the cycle ----
   let tod = START_TOD;
-  let waterMat = null;
+  let waterMat = null, pondMat = null;
   let lastBakeT = -100, lastBakeElev = 999, lastBakeStorm = 0;
   const _sunDir = new THREE.Vector3(), _moonDir = new THREE.Vector3();
   const _c = new THREE.Color();
@@ -371,6 +371,12 @@ export function buildSky(scene, renderer, camera) {
       PAL.waterDeep.get(elevDeg, wu.uDeepColor.value);
     }
 
+    // the lagoon mirrors the same sky as the sea
+    if (pondMat) {
+      PAL.waterZenith.get(elevDeg, pondMat.uniforms.uSkyZenith.value);
+      PAL.waterHorizon.get(elevDeg, pondMat.uniforms.uSkyHorizon.value);
+    }
+
     // clouds, stars, moon (the squall smothers the sky)
     PAL.cloud.get(elevDeg, _c);
     _c.multiplyScalar(1 - 0.62 * storm);
@@ -423,6 +429,7 @@ export function buildSky(scene, renderer, camera) {
     sun,
     update,
     attachWater(mat) { waterMat = mat; },
+    attachPond(mat) { pondMat = mat; },
     setTod(v) { tod = ((v % 1) + 1) % 1; },
     getTod: () => tod,
     warp(s) { tod = (tod + s / DAY_CYCLE_SECONDS) % 1; },
