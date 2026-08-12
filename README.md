@@ -15,10 +15,13 @@ npm run dev
 
 Open <http://localhost:5173>, click **walk the beach**.
 
-Every island is grown from a seed. The title screen shows the current one
-(`island #2281` by default); tick **use a random island seed** to regrow a
-brand-new island live behind the title, or pin a favorite with
-`http://localhost:5173/?seed=12345`.
+Every island is grown from a seed — shoreline, palms, surge zones, **and the
+moment you arrive**: the time of day, the tide that goes with it, and the
+weather (some islands greet you mid-squall). The title screen shows the
+current one (`island #2281`, a curated golden afternoon, by default). Flip
+**use a random island seed** to regrow a brand-new island live — the switch
+sticks, so every refresh rolls another island at another hour — or pin a
+favorite with `http://localhost:5173/?seed=12345`.
 
 | Input | Action |
 | --- | --- |

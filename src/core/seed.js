@@ -7,14 +7,19 @@
 // The title screen offers a "random island" toggle that reseeds live.
 
 export const DEFAULT_SEED = 2281;
+export const RANDOM_PREF_KEY = 'cove-random-seed';
 
 const params = new URLSearchParams(window.location.search);
 export const SEED_FROM_URL = params.has('seed');
 
+// ?seed=N wins; otherwise a sticky "random island" preference rolls a fresh
+// seed on every page load; otherwise the curated default island.
 let master = DEFAULT_SEED;
 if (SEED_FROM_URL) {
   const n = parseInt(params.get('seed'), 10);
   if (Number.isFinite(n)) master = n >>> 0;
+} else if (window.localStorage.getItem(RANDOM_PREF_KEY) === '1') {
+  master = randomSeed();
 }
 
 export function getSeed() {

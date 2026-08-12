@@ -9,6 +9,8 @@
 
 import * as THREE from 'three';
 import { uniforms } from '../core/env.js';
+import { mulberry32 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 
 const RAIN_COUNT = 700;
 const CYL_R = 15;    // rain cylinder radius around the camera
@@ -115,9 +117,48 @@ export function buildWeather(camera, audio) {
     }
   }
 
+  // the island seed decides what sky you arrive under: usually clear with
+  // the next squall somewhere on the schedule, sometimes one mid-pour
+  function reseed() {
+    const r = mulberry32(subSeed('weather'));
+    const roll = r();
+    if (roll < 0.12) {
+      W.state = 'squall';
+      W.stateT = W.squallLen = 45 + r() * 60;
+      W.wx = 0.92;
+      W.groundWet = 0.85;
+    } else if (roll < 0.2) {
+      W.state = 'building';
+      W.stateT = 18 + r() * 30;
+      W.wx = 1 - W.stateT / 55;
+      W.groundWet = W.wx * 0.4;
+    } else {
+      W.state = 'clear';
+      W.wx = 0;
+      W.groundWet = 0;
+      W.nextIn = (0.25 + r() * 2.2) * 720;
+    }
+    uniforms.uStorm.value = W.wx;
+    uniforms.uRainWet.value = W.groundWet;
+    uniforms.uWindAmp.value = 1 + 1.7 * W.wx;
+  }
+
+  // hard reset to a clear sky (the curated default island's arrival state)
+  function clearNow() {
+    W.state = 'clear';
+    W.wx = 0;
+    W.groundWet = 0;
+    W.nextIn = 500 + Math.random() * 700;
+    uniforms.uStorm.value = 0;
+    uniforms.uRainWet.value = 0;
+    uniforms.uWindAmp.value = 1;
+  }
+
   return {
     group: lines,
     update,
+    reseed,
+    clearNow,
     // debug: bring the squall on (or end it) right now
     rain(on = true) {
       if (on) setState('building', 12);

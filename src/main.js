@@ -3,7 +3,8 @@
 import * as THREE from 'three';
 import { uniforms, FOG_COLOR } from './core/env.js';
 import { applyAnisotropy } from './core/textures.js';
-import { getSeed, setSeed, randomSeed, DEFAULT_SEED, SEED_FROM_URL } from './core/seed.js';
+import { getSeed, setSeed, randomSeed, subSeed, DEFAULT_SEED, SEED_FROM_URL, RANDOM_PREF_KEY } from './core/seed.js';
+import { mulberry32 } from './core/rng.js';
 import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland } from './world/island.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
@@ -96,6 +97,19 @@ function disposeDeep(obj) {
   });
 }
 
+// the seed also picks the moment you arrive in: time of day (and with it
+// the tide) plus the weather. The curated default island keeps its golden
+// afternoon; every other seed rolls its own hour and sky.
+function applySeedMood() {
+  if (getSeed() === DEFAULT_SEED) {
+    sky.setTod(0.60); // curated: golden afternoon, clear sky on arrival
+    weather.clearNow();
+    return;
+  }
+  sky.setTod(mulberry32(subSeed('tod'))());
+  weather.reseed();
+}
+
 function rebuildWorld() {
   if (world) {
     for (const obj of [
@@ -109,6 +123,7 @@ function rebuildWorld() {
     footprints.clear();
   }
   world = buildWorldNow();
+  applySeedMood();
   updateSeedTag();
 }
 
@@ -124,6 +139,7 @@ scene.add(turtle.group);
 
 const weather = buildWeather(camera, audio);
 scene.add(weather.group);
+applySeedMood(); // the seed picks the arrival hour + sky
 
 // ---- UI ----
 const touchUI = buildTouchUI(player);
@@ -140,8 +156,17 @@ updateSeedTag();
 if (SEED_FROM_URL) {
   seedRow.style.display = 'none';
 } else {
+  // sticky preference: while on, every page load rolls a fresh island
+  // (new shoreline, new hour, new weather)
+  seedToggle.checked = localStorage.getItem(RANDOM_PREF_KEY) === '1';
   seedToggle.addEventListener('change', () => {
-    setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
+    if (seedToggle.checked) {
+      localStorage.setItem(RANDOM_PREF_KEY, '1');
+      setSeed(randomSeed());
+    } else {
+      localStorage.removeItem(RANDOM_PREF_KEY);
+      setSeed(DEFAULT_SEED);
+    }
     rebuildWorld();
   });
 }

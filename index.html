@@ -53,7 +53,32 @@
       gap: 7px;
       user-select: none;
     }
-    #seedRow input { accent-color: #d8c9a3; cursor: pointer; }
+    #seedRow input {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 34px;
+      height: 19px;
+      border-radius: 10px;
+      background: rgba(255, 245, 225, 0.14);
+      border: 1px solid rgba(255, 245, 225, 0.4);
+      position: relative;
+      cursor: pointer;
+      margin: 0;
+      transition: background 0.25s;
+    }
+    #seedRow input::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 13px;
+      height: 13px;
+      border-radius: 50%;
+      background: rgba(255, 245, 225, 0.7);
+      transition: transform 0.25s, background 0.25s;
+    }
+    #seedRow input:checked { background: rgba(216, 201, 163, 0.55); }
+    #seedRow input:checked::after { transform: translateX(15px); background: #fff8e8; }
     #seedTag {
       margin-top: 8px;
       font-family: ui-monospace, Menlo, monospace;
