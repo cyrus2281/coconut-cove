@@ -6,6 +6,7 @@
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius, cayCenter } from './island.js';
 
@@ -47,7 +48,7 @@ function buildGullMesh(bodyMat, wingMat, beakMat) {
 }
 
 export function buildBirds(scene, player, audio) {
-  const rand = mulberry32(808);
+  const rand = mulberry32(subSeed('gulls'));
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.8 });
   const wingMat = new THREE.MeshStandardMaterial({
     color: 0xd8dadc, roughness: 0.8, side: THREE.DoubleSide,

@@ -15,6 +15,8 @@
 
 import * as THREE from 'three';
 import { DAY_CYCLE_SECONDS } from '../core/env.js';
+import { mulberry32 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 
 // ---- tide ----
 // Semidiurnal: two highs and two lows per day cycle. Everything upstream of
@@ -29,10 +31,11 @@ export function tideFromTod(tod) {
   return { level: TIDE.amp * Math.cos(angle), angle };
 }
 
+// azimuth center, angular width (rad), max run-up height (m), period (s),
+// phase (s). Contents are reseeded per island — the array identity is stable.
 export const ZONES = [
-  // azimuth center, angular width (rad), max run-up height (m), period (s), phase (s)
-  { az: 1.62, width: 0.60, height: 0.85, period: 13.0, phase: 0.0 }, // spawn beach
-  { az: 3.50, width: 0.48, height: 0.62, period: 17.0, phase: 6.5 }, // by the rock outcrop
+  { az: 1.62, width: 0.60, height: 0.85, period: 13.0, phase: 0.0 },
+  { az: 3.50, width: 0.48, height: 0.62, period: 17.0, phase: 6.5 },
 ];
 
 // gentle everywhere-swash (bookkeeping twin of the Gerstner shore lap)
@@ -48,6 +51,21 @@ export const swashUniforms = {
   uAmbient: { value: new THREE.Vector2(AMBIENT.height, AMBIENT.period) },
   uDrySecs: { value: DRY_SECONDS },
 };
+
+// regrow the surge zones for the current master seed (mutates ZONES in
+// place and refreshes the shared uniforms, so every material follows)
+export function reseedSwash() {
+  const r = mulberry32(subSeed('swash'));
+  const az1 = r() * Math.PI * 2;
+  const az2 = (az1 + 2.2 + r() * 1.8) % (Math.PI * 2);
+  ZONES[0] = { az: az1, width: 0.5 + r() * 0.2, height: 0.75 + r() * 0.2, period: 12 + r() * 2, phase: 0 };
+  ZONES[1] = { az: az2, width: 0.4 + r() * 0.18, height: 0.55 + r() * 0.15, period: 16 + r() * 2.5, phase: r() * 8 };
+  swashUniforms.uZone1.value.set(ZONES[0].az, ZONES[0].width, ZONES[0].height, ZONES[0].period);
+  swashUniforms.uZone1Ph.value = ZONES[0].phase;
+  swashUniforms.uZone2.value.set(ZONES[1].az, ZONES[1].width, ZONES[1].height, ZONES[1].period);
+  swashUniforms.uZone2Ph.value = ZONES[1].phase;
+}
+reseedSwash();
 
 // ---- JS mirrors (crab AI, prop logic) ----
 const SW_A = 0.30, SW_B = 0.85, SW_RISE_P = 0.6, SW_FALL_P = 1.5;

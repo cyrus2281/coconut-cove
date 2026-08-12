@@ -42,6 +42,25 @@
       transition: background 0.25s;
     }
     #enterTouch:hover { background: rgba(255, 235, 200, 0.15); }
+    #seedRow {
+      margin-top: 14px;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 12px;
+      opacity: 0.65;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      user-select: none;
+    }
+    #seedRow input { accent-color: #d8c9a3; cursor: pointer; }
+    #seedTag {
+      margin-top: 8px;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      opacity: 0.4;
+      letter-spacing: 0.08em;
+    }
 
     /* on-screen touch controls */
     #touchui { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
@@ -116,6 +135,8 @@
       <span><b>M</b>sound</span>
     </div>
     <button id="enterTouch">📱 touch / mobile controls</button>
+    <label id="seedRow"><input type="checkbox" id="seedToggle"> use a random island seed</label>
+    <div id="seedTag">island #0</div>
   </div>
 
   <div id="hud">

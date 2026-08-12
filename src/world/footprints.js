@@ -182,5 +182,16 @@ export function buildFootprints() {
     cursor = (cursor + 1) % MAX_PRINTS;
   }
 
-  return { mesh, stamp };
+  // wipe every print (used when the island is regrown)
+  function clear() {
+    for (let i = 0; i < MAX_PRINTS; i++) {
+      mesh.setMatrixAt(i, zero);
+      stamps.setX(i, -1e6);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    stamps.needsUpdate = true;
+    cursor = 0;
+  }
+
+  return { mesh, stamp, clear };
 }

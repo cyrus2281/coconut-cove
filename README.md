@@ -15,6 +15,11 @@ npm run dev
 
 Open <http://localhost:5173>, click **walk the beach**.
 
+Every island is grown from a seed. The title screen shows the current one
+(`island #2281` by default); tick **use a random island seed** to regrow a
+brand-new island live behind the title, or pin a favorite with
+`http://localhost:5173/?seed=12345`.
+
 | Input | Action |
 | --- | --- |
 | `W A S D` / arrows | walk |
@@ -56,12 +61,36 @@ Everything is generated at startup from seeded noise — geometry, textures
 - **Wet & dry sand** — sand darkens hard where water has recently been,
   turns glossy, then dries back over ~35 s in a visible gradient, with
   fizzing foam residue left behind each retreating wave.
+- **Tides** — the sea level breathes ±0.45 m twice per day. Low tide bares
+  wide, slow-drying wet flats (and the offshore sandbar); high tide narrows
+  the beach, erases low-tide footprints and cuts the cay off.
+- **Offshore cay** — a bare sandbar islet past the shelf, ringed by its own
+  swash: wade across the channel at low tide, watch it drown at high.
+- **Wave push** — standing in a surge, the bore physically carries you up
+  the beach and the backwash tugs you back out. Jump to escape.
 - **Day/night cycle** — a 12-minute day: golden afternoon, sunset palette,
   starfield + moonlit night (one light plays sun and moon), dawn. The
   ambient light is rebaked live from the sky as it changes.
-- **Life & air** — gulls that flap and glide, ghost crabs that scuttle
-  sideways, dodge you, and sprint uphill ahead of incoming surges, drifting
-  clouds, procedural surf + wind audio synced to the surge periods.
+- **Nights worth staying for** — bioluminescent plankton set the breaking
+  surf glowing electric blue-green and trace the retreating swash line on
+  the sand; shooting stars streak the dome; a masthead light rounds the
+  horizon.
+- **Weather** — every couple of days a squall builds: the sky goes leaden,
+  the sea grays and chops up, rain streaks lash the camera, the whole island
+  soaks dark and then dries back out. Palms thrash, audio pours.
+- **Life & air** — gulls that soar, glide down, land, hop about and flush
+  (crying off indignantly) when you walk up; ghost crabs that scuttle
+  sideways, dodge surges and stitch tiny wave-washed tracks; fish schools
+  patrolling the shallows that scatter when you wade in; a green sea turtle
+  that hauls out on random nights to dig a nest and slip away before dawn;
+  a sloop forever rounding the island; drifting clouds.
+- **Positional audio** — procedural surf panned to its beaches and louder at
+  the waterline, wind that picks up on the dunes and in storms, palm rustle
+  under the crowns, synthesized gull cries from where the gulls actually
+  are, rain overhead. No audio files.
+- **Seeded worlds** — one master seed grows the shoreline, terrain, surge
+  zones, cay bearing, palms, scatter and fauna homes. Same seed, same island,
+  every time.
 
 ## Debug console
 
@@ -73,5 +102,10 @@ __beach.teleport(x, z, yaw, pitch)
 __beach.info()                  // { calls, tris, fps }
 __beach.setTod(0.86)            // time of day: 0.60 afternoon, 0.705 sunset, 0.86 night
 __beach.warp(30)                // fast-forward the world clock (30s)
+__beach.tide()                  // { level, rising }
+__beach.rain()                  // summon a squall (rain(false) clears it)
+__beach.reseed()                // regrow a random island (reseed(1234) for a specific one)
+__beach.sky.meteor(2)           // force a shooting star (at night)
+__beach.turtle.visit()          // invite the sea turtle ashore right now
 __beach.stampLine()             // lay a test track of footprints into the surge zone
 ```

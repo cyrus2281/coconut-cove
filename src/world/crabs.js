@@ -9,7 +9,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
-import { runupNow } from './swash.js';
+import { runupNow, ZONES } from './swash.js';
+import { subSeed } from '../core/seed.js';
 
 const _v = new THREE.Vector3();
 
@@ -118,13 +119,16 @@ export function buildCrabs(player, footprints) {
   group.name = 'crabs';
 
   const crabs = [];
+  // one crab per surge beach, tinted by the seed
+  const tintRand = mulberry32(subSeed('crabTints'));
+  const tint = () => new THREE.Color().setHSL(0.05 + tintRand() * 0.06, 0.5 + tintRand() * 0.2, 0.42 + tintRand() * 0.12);
   const defs = [
-    { az: 1.50, tint: 0xb55c32, chir: 1 },   // surge-zone beach, near spawn
-    { az: 3.42, tint: 0xc98a52, chir: -1 },  // by the rocks
+    { az: ZONES[0].az - 0.12, tint: tint(), chir: 1 },
+    { az: ZONES[1].az + 0.08, tint: tint(), chir: -1 },
   ];
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
-    const rand = mulberry32(7000 + i * 131);
+    const rand = mulberry32(subSeed('crab' + i));
     const parts = buildCrab(def.tint);
     const start = beachPoint(def.az, 0.1, rand) || { x: 0, z: 0, h: 1 };
     parts.group.position.set(start.x, start.h + 0.034, start.z);

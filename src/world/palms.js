@@ -7,7 +7,9 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
+import { subSeed } from '../core/seed.js';
 import { islandHeight, shoreRadius } from './island.js';
+import { ZONES } from './swash.js';
 import { barkTexture, leafletTexture, huskTexture } from '../core/textures.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -287,21 +289,40 @@ function addCoconut(husk, center, radius, tint, flex, phase, rand) {
 // ------------------------------------------------------------------ grove
 export function buildPalms() {
   const bark = new MeshData(), leaf = new MeshData(), husk = new MeshData();
-  const rand = mulberry32(500);
+  const rand = mulberry32(subSeed('palms'));
 
+  // grow the grove from the seed: a hero palm leaning out over the water by
+  // the spawn (surge) beach, a cluster beside it, a pair across the island,
+  // and a loner on the dunes
+  const heroAz = ZONES[0].az + 0.08;
   const spots = [
-    // the hero: leaning out over the water near the spawn beach
-    { az: 1.70, d: -3.2, height: 7.6, lean: 3.3, leanOut: true },
-    // south-east cluster
-    { az: 1.10, d: -11, height: 8.6, lean: 0.9 },
-    { az: 1.30, d: -8.5, height: 6.2, lean: 1.3 },
-    { az: 0.92, d: -16, height: 7.4, lean: 0.6 },
-    // west pair
-    { az: 2.62, d: -10, height: 8.9, lean: 1.1 },
-    { az: 2.88, d: -13.5, height: 5.8, lean: 1.5 },
-    // lone inland palm on the dune
-    { az: 4.55, d: -19, height: 7.0, lean: 0.5 },
+    { az: heroAz, d: -3.2, height: 6.8 + rand() * 1.6, lean: 2.9 + rand() * 0.8, leanOut: true },
   ];
+  const clusterAz = heroAz - 0.35 - rand() * 0.35;
+  const nCluster = 3 + (rand() < 0.4 ? 1 : 0);
+  for (let i = 0; i < nCluster; i++) {
+    spots.push({
+      az: clusterAz + (rand() - 0.5) * 0.45,
+      d: -(8 + rand() * 9),
+      height: 5.6 + rand() * 3.2,
+      lean: 0.5 + rand() * 0.9,
+    });
+  }
+  const pairAz = heroAz + 0.9 + rand() * 1.6;
+  for (let i = 0; i < 2; i++) {
+    spots.push({
+      az: pairAz + i * (0.2 + rand() * 0.12),
+      d: -(9 + rand() * 6),
+      height: 5.8 + rand() * 3.1,
+      lean: 0.9 + rand() * 0.7,
+    });
+  }
+  spots.push({
+    az: pairAz + 1.5 + rand() * 1.2,
+    d: -(16 + rand() * 5),
+    height: 6.4 + rand() * 1.4,
+    lean: 0.4 + rand() * 0.4,
+  });
 
   const trees = [];
   for (let i = 0; i < spots.length; i++) {
@@ -314,7 +335,7 @@ export function buildPalms() {
     const leanDir = new THREE.Vector2(Math.cos(leanA), Math.sin(leanA));
     if (s.leanOut) leanDir.set(Math.cos(s.az), Math.sin(s.az)); // out toward the sea
     trees.push(buildPalm(bark, leaf, husk, {
-      x, z, height: s.height, leanDir, leanAmount: s.lean, seed: 1000 + i * 37,
+      x, z, height: s.height, leanDir, leanAmount: s.lean, seed: subSeed('palm' + i),
     }));
   }
 

@@ -3,7 +3,9 @@
 import * as THREE from 'three';
 import { uniforms, FOG_COLOR } from './core/env.js';
 import { applyAnisotropy } from './core/textures.js';
-import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius } from './world/island.js';
+import { getSeed, setSeed, randomSeed, DEFAULT_SEED, SEED_FROM_URL } from './core/seed.js';
+import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland } from './world/island.js';
+import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
 import { buildPalms } from './world/palms.js';
@@ -40,45 +42,109 @@ const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerH
 const audio = new OceanAudio();
 
 // ---- world ----
+// Static pieces live for the whole session; everything whose shape depends
+// on the island seed lives in `world` and can be regrown live.
 const sky = buildSky(scene, renderer, camera);
-const terrain = buildTerrain();
-scene.add(terrain);
-const heightTex = bakeHeightmap(512);
-const ocean = buildOcean(heightTex);
-scene.add(ocean.group);
-const palms = buildPalms();
-scene.add(palms.group);
-scene.add(buildScatter());
-sky.attachWater(ocean.material);
 
 const footprints = buildFootprints();
 scene.add(footprints.mesh);
 
 const player = new Player(camera, canvas);
 player.onStep = footprints.stamp;
-audio.attachWorld(player, palms.trees.map((t) => t.crown));
 
-const crabs = buildCrabs(player, footprints);
-scene.add(crabs.group);
+let world = null;
+
+function buildWorldNow() {
+  reseedSwash();
+  reseedIsland();
+  player.respawn();
+  const terrain = buildTerrain();
+  scene.add(terrain);
+  const heightTex = bakeHeightmap(512);
+  const ocean = buildOcean(heightTex);
+  scene.add(ocean.group);
+  sky.attachWater(ocean.material);
+  const palms = buildPalms();
+  scene.add(palms.group);
+  const scatterG = buildScatter();
+  scene.add(scatterG);
+  const crabs = buildCrabs(player, footprints);
+  scene.add(crabs.group);
+  const fish = buildFish(player);
+  scene.add(fish.group);
+  audio.attachWorld(player, palms.trees.map((t) => t.crown));
+  applyAnisotropy(renderer);
+  return { terrain, heightTex, ocean, palms, scatterG, crabs, fish };
+}
+
+function disposeDeep(obj) {
+  obj.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) {
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        for (const k in m) {
+          if (m[k] && m[k].isTexture) m[k].dispose();
+        }
+        if (m.uniforms) {
+          for (const u of Object.values(m.uniforms)) {
+            if (u.value && u.value.isTexture) u.value.dispose();
+          }
+        }
+        m.dispose();
+      }
+    }
+  });
+}
+
+function rebuildWorld() {
+  if (world) {
+    for (const obj of [
+      world.terrain, world.ocean.group, world.palms.group,
+      world.scatterG, world.crabs.group, world.fish.group,
+    ]) {
+      scene.remove(obj);
+      disposeDeep(obj);
+    }
+    world.heightTex.dispose();
+    footprints.clear();
+  }
+  world = buildWorldNow();
+  updateSeedTag();
+}
+
+world = buildWorldNow();
 
 const boat = buildBoat();
 scene.add(boat.group);
-
-const fish = buildFish(player);
-scene.add(fish.group);
 
 const birds = buildBirds(scene, player, audio);
 
 const turtle = buildTurtle(player, footprints);
 scene.add(turtle.group);
 
-applyAnisotropy(renderer);
-
 const weather = buildWeather(camera, audio);
 scene.add(weather.group);
 
 // ---- UI ----
 const touchUI = buildTouchUI(player);
+
+// island seed controls: ?seed=N pins an island (toggle hidden); otherwise
+// the checkbox regrows a random island live behind the title screen
+const seedRow = document.getElementById('seedRow');
+const seedToggle = document.getElementById('seedToggle');
+const seedTag = document.getElementById('seedTag');
+function updateSeedTag() {
+  seedTag.textContent = 'island #' + getSeed();
+}
+updateSeedTag();
+if (SEED_FROM_URL) {
+  seedRow.style.display = 'none';
+} else {
+  seedToggle.addEventListener('change', () => {
+    setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
+    rebuildWorld();
+  });
+}
 
 function enterWorld(withTouch = false) {
   overlay.classList.add('hidden');
@@ -128,9 +194,9 @@ renderer.setAnimationLoop(() => {
   player.update(dt);
   birds.update(t, dt);
   sky.update(dt, t);
-  crabs.update(t, dt);
+  world.crabs.update(t, dt);
   boat.update(t);
-  fish.update(t, dt);
+  world.fish.update(t, dt);
   turtle.update(t, dt);
   weather.update(t, dt);
   audio.update(t);
@@ -148,7 +214,15 @@ const VIEWS = {
   sun: { pos: [-20, 2.2, 38], yaw: 2.2, pitch: -0.02 },
 };
 window.__beach = {
-  scene, renderer, camera, player, uniforms, audio, crabs, footprints, sky, boat, fish, birds, turtle, weather,
+  scene, renderer, camera, player, uniforms, audio, footprints, sky, boat, birds, turtle, weather,
+  get crabs() { return world.crabs; },
+  get fish() { return world.fish; },
+  seed: () => getSeed(),
+  reseed(s) {
+    setSeed(s === undefined ? randomSeed() : s);
+    rebuildWorld();
+    return getSeed();
+  },
   fps: () => Math.round(fpsEMA),
   info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, fps: Math.round(fpsEMA) }),
   height: islandHeight,

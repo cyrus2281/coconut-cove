@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { islandHeight, shoreRadius } from './world/island.js';
-import { runupNow, runupVel } from './world/swash.js';
+import { runupNow, runupVel, ZONES } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
 const EYE = 1.66;
@@ -18,16 +18,11 @@ export class Player {
     this.dom = dom;
     camera.rotation.order = 'YXZ';
 
-    // spawn on the south beach looking out over the water toward the sun
-    const az = 1.62;
-    const r = shoreRadius(az) - 7.5;
-    this.pos = new THREE.Vector3(Math.cos(az) * r, 0, Math.sin(az) * r);
-    this.pos.y = islandHeight(this.pos.x, this.pos.z) + EYE;
-    const out = new THREE.Vector2(Math.cos(az), Math.sin(az));
-    this.yaw = Math.atan2(-out.x, -out.y) + 0.35;
-    this.pitch = -0.06;
-
+    this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
+    this.yaw = 0;
+    this.pitch = -0.06;
+    this.respawn();
     this.grounded = true;
     this.keys = new Set();
     this.bobPhase = 0;
@@ -40,6 +35,19 @@ export class Player {
     this.stepSide = 0;
 
     this._bind();
+  }
+
+  // spawn on the main surge beach looking out over the water
+  // (called again whenever the island is regrown from a new seed)
+  respawn() {
+    const az = ZONES[0].az + 0.08;
+    const r = shoreRadius(az) - 7.5;
+    this.pos.set(Math.cos(az) * r, 0, Math.sin(az) * r);
+    this.pos.y = islandHeight(this.pos.x, this.pos.z) + EYE;
+    this.yaw = Math.atan2(-Math.cos(az), -Math.sin(az)) + 0.35;
+    this.pitch = -0.06;
+    this.vel.set(0, 0, 0);
+    this.grounded = true;
   }
 
   _bind() {

@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
 
@@ -24,14 +25,18 @@ function fishGeometry() {
   return mergeGeometries([body.toNonIndexed(), tail]);
 }
 
-const SCHOOLS = [
-  { az: 1.25, count: 24, depth: 0.7, seed: 501 },
-  { az: 3.30, count: 20, depth: 1.2, seed: 502 },
-];
+// school homes are grown from the island seed inside buildFish
 
 export function buildFish(player) {
   const group = new THREE.Group();
   group.name = 'fish';
+
+  const seedRand = mulberry32(subSeed('fish'));
+  const azA = seedRand() * Math.PI * 2;
+  const SCHOOLS = [
+    { az: azA, count: 22 + Math.floor(seedRand() * 5), depth: 0.7, seed: subSeed('schoolA') },
+    { az: azA + 2 + seedRand() * 2, count: 18 + Math.floor(seedRand() * 5), depth: 1.2, seed: subSeed('schoolB') },
+  ];
 
   const geo = fishGeometry();
   const mat = new THREE.MeshStandardMaterial({

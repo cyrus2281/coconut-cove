@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, islandNormal, shoreRadius } from './island.js';
 
@@ -118,7 +119,7 @@ function buildFlickParticles() {
 }
 
 export function buildTurtle(player, footprints) {
-  const rand = mulberry32(4242);
+  const rand = mulberry32(subSeed('turtle'));
   const parts = buildTurtleMesh();
   const g = parts.group;
   g.visible = false;

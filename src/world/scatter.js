@@ -5,11 +5,12 @@
 
 import * as THREE from 'three';
 import { mulberry32, Simplex2 } from '../core/rng.js';
+import { subSeed } from '../core/seed.js';
 import { islandHeight, islandNormal, shoreRadius, cayCenter } from './island.js';
 import { shellTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
 
-const scatterNoise = new Simplex2(909);
+let scatterNoise = null; // recreated per island inside buildScatter
 
 // Find a point whose terrain height falls in [hMin, hMax]. A tenth of
 // everything washes up on the offshore cay instead of the main shoreline.
@@ -139,7 +140,7 @@ function starfishGeometry() {
 
 // ------------------------------------------------------------- scatter passes
 function placeShells(group) {
-  const rand = mulberry32(2100);
+  const rand = mulberry32(subSeed('shells'));
   const shellMat = new THREE.MeshStandardMaterial({
     map: shellTexture(), roughness: 0.42, metalness: 0.0,
   });
@@ -206,7 +207,7 @@ function placeShells(group) {
 }
 
 function placePebbles(group) {
-  const rand = mulberry32(2200);
+  const rand = mulberry32(subSeed('pebbles'));
   const COUNT = 1700;
   const geo = new THREE.IcosahedronGeometry(0.5, 0);
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.8 });
@@ -240,8 +241,8 @@ function placePebbles(group) {
 }
 
 function placeRocks(group) {
-  const rand = mulberry32(2300);
-  const noise = new Simplex2(303);
+  const rand = mulberry32(subSeed('rocks'));
+  const noise = new Simplex2(subSeed('rockShape'));
   const rockMat = new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.95,
   });
@@ -294,7 +295,7 @@ function placeRocks(group) {
 }
 
 function placeDriftwood(group) {
-  const rand = mulberry32(2400);
+  const rand = mulberry32(subSeed('driftwood'));
   const mat = new THREE.MeshStandardMaterial({
     map: barkTexture(true), roughness: 0.9, bumpMap: barkTexture(true), bumpScale: 0.3,
   });
@@ -330,7 +331,7 @@ function placeDriftwood(group) {
 }
 
 function placeGrass(group) {
-  const rand = mulberry32(2500);
+  const rand = mulberry32(subSeed('grass'));
   const data = new MeshData();
   let tufts = 0;
   for (let attempt = 0; attempt < 6000 && tufts < 400; attempt++) {
@@ -382,7 +383,7 @@ function placeGrass(group) {
 }
 
 function placeSeaweed(group) {
-  const rand = mulberry32(2600);
+  const rand = mulberry32(subSeed('seaweed'));
   const data = new MeshData();
   for (let c = 0; c < 14; c++) {
     const p = shorePoint(rand, -0.15, 0.5);
@@ -424,6 +425,7 @@ function placeSeaweed(group) {
 }
 
 export function buildScatter() {
+  scatterNoise = new Simplex2(subSeed('drift'));
   const group = new THREE.Group();
   group.name = 'scatter';
   placeShells(group);

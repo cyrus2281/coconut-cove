@@ -4,30 +4,43 @@
 // water shader samples for depth (foam, color, wave damping).
 
 import * as THREE from 'three';
-import { Simplex2 } from '../core/rng.js';
+import { Simplex2, mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
+import { subSeed } from '../core/seed.js';
 import { swashUniforms, SWASH_GLSL } from './swash.js';
 import { sandTextures, causticTexture, foamTexture } from '../core/textures.js';
 
-const noise = new Simplex2(2281);
+// Everything that defines this island's shape lives in these lets and is
+// regrown from the master seed by reseedIsland().
+let noise, BASE_R, LOBES, CAY_POS;
 
 // Lobed shoreline: nominal water's-edge radius for a given angle.
 export function shoreRadius(theta) {
-  return 46 * (1
-    + 0.17 * Math.sin(2 * theta + 1.7)
-    + 0.09 * Math.sin(3 * theta + 0.4)
-    + 0.05 * Math.sin(5 * theta + 2.9));
+  let k = 1;
+  for (const l of LOBES) k += l.a * Math.sin(l.n * theta + l.ph);
+  return BASE_R * k;
 }
 
-// Offshore sandbar cay: a bare dome ~38m past the shoreline. Its crown pokes
-// ~0.38m above mean sea level, so the low tide bares a walkable islet and the
-// high tide drowns it back to a shimmer of shallows.
-export const CAY_AZ = 0.95;
-const CAY_POS = (() => {
-  const r = shoreRadius(CAY_AZ) + 38;
-  return { x: Math.cos(CAY_AZ) * r, z: Math.sin(CAY_AZ) * r };
-})();
 export function cayCenter() { return { ...CAY_POS }; }
+
+// Regrow shoreline lobes, terrain noise and the offshore cay's bearing.
+// The cay is a bare dome ~38m past the shoreline whose crown pokes ~0.35m
+// above mean sea level: low tide bares a walkable islet, high tide drowns
+// it back to a shimmer of shallows.
+export function reseedIsland() {
+  noise = new Simplex2(subSeed('terrain'));
+  const r = mulberry32(subSeed('shore'));
+  BASE_R = 43 + r() * 7;
+  LOBES = [
+    { n: 2, a: 0.11 + r() * 0.11, ph: r() * Math.PI * 2 },
+    { n: 3, a: 0.05 + r() * 0.07, ph: r() * Math.PI * 2 },
+    { n: 5, a: 0.03 + r() * 0.04, ph: r() * Math.PI * 2 },
+  ];
+  const cayAz = r() * Math.PI * 2;
+  const cayR = shoreRadius(cayAz) + 35 + r() * 6;
+  CAY_POS = { x: Math.cos(cayAz) * cayR, z: Math.sin(cayAz) * cayR };
+}
+reseedIsland();
 
 // polynomial smooth-max (mirror of the usual smin)
 function smax(a, b, k) {
