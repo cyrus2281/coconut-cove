@@ -1,5 +1,13 @@
-// Procedural ocean ambience with Web Audio: two surf layers of filtered noise
-// swelling on offset periods, plus a soft steady wind bed. No audio files.
+// Procedural, positional ocean ambience with Web Audio — no audio files.
+// The two surf layers sit on their surge beaches (stereo-panned by where you
+// face, louder as you approach the waterline), a gentle lap rides the shore
+// everywhere, wind swells on the dune tops and in squalls, palms hiss when
+// you stand under a crown, rain drums during a squall, and gulls cry from
+// wherever they actually are.
+
+import { islandHeight, shoreRadius } from './world/island.js';
+import { ZONES } from './world/swash.js';
+import { uniforms } from './core/env.js';
 
 export class OceanAudio {
   constructor() {
@@ -8,6 +16,13 @@ export class OceanAudio {
     this.layers = [];
     this.muted = false;
     this.volume = 0.4;
+    this.player = null;
+    this.crowns = [];
+  }
+
+  attachWorld(player, crowns) {
+    this.player = player;
+    this.crowns = crowns || [];
   }
 
   start() {
@@ -35,69 +50,147 @@ export class OceanAudio {
     this.master.gain.value = 0;
     this.master.connect(ctx.destination);
 
-    const mkLayer = (freq, q, period, phase, gainMax, pow) => {
+    const mkLayer = (opts) => {
       const src = ctx.createBufferSource();
       src.buffer = buf;
       src.loop = true;
-      src.playbackRate.value = 0.9 + Math.random() * 0.2;
+      src.playbackRate.value = opts.rate || 0.9 + Math.random() * 0.2;
       const filter = ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.value = freq;
-      filter.Q.value = q;
+      filter.type = opts.type || 'lowpass';
+      filter.frequency.value = opts.freq;
+      filter.Q.value = opts.q;
       const g = ctx.createGain();
       g.gain.value = 0;
-      src.connect(filter).connect(g).connect(this.master);
+      const pan = ctx.createStereoPanner();
+      src.connect(filter).connect(g).connect(pan).connect(this.master);
       src.start();
-      this.layers.push({ filter, g, period, phase, gainMax, baseFreq: freq, pow });
+      const layer = { ...opts, filter, g, pan, baseFreq: opts.freq };
+      this.layers.push(layer);
+      return layer;
     };
 
-    // two surf swells matched to the surge-zone periods (13s / 17s), phased
-    // so the audio crash lands roughly when the bore rushes the beach
-    mkLayer(650, 0.6, 13.0, 0.44, 0.75, 2.6);
-    mkLayer(950, 0.7, 17.0, -1.96, 0.55, 3.0);
-    mkLayer(320, 0.4, 31, 7, 0.16, 1); // wind: long slow wander
+    // surf on the two surge beaches, phased so the crash lands with the bore
+    mkLayer({ kind: 'zone', az: ZONES[0].az, freq: 650, q: 0.6, period: 13.0, phase: 0.44, gainMax: 0.8, pow: 2.6 });
+    mkLayer({ kind: 'zone', az: ZONES[1].az, freq: 950, q: 0.7, period: 17.0, phase: -1.96, gainMax: 0.6, pow: 3.0 });
+    // the everywhere-lap at the waterline
+    mkLayer({ kind: 'lap', freq: 540, q: 0.5, period: 7.0, phase: 2.1, gainMax: 0.3, pow: 1.8 });
+    // wind bed
+    mkLayer({ kind: 'wind', freq: 320, q: 0.4, period: 31, phase: 7, gainMax: 0.16, pow: 1 });
+    // palm-frond hiss (gain fully driven in update)
+    mkLayer({ kind: 'rustle', type: 'bandpass', freq: 1750, q: 0.9, rate: 1.9 });
 
-    // rain: bright patter + low wash, both silent until a squall
-    {
-      const mkRain = (type, freq, q) => {
-        const src = ctx.createBufferSource();
-        src.buffer = buf;
-        src.loop = true;
-        src.playbackRate.value = 1.7;
-        const filter = ctx.createBiquadFilter();
-        filter.type = type;
-        filter.frequency.value = freq;
-        filter.Q.value = q;
-        const g = ctx.createGain();
-        g.gain.value = 0;
-        src.connect(filter).connect(g).connect(this.master);
-        src.start();
-        return g;
-      };
-      this.rainHi = mkRain('bandpass', 3200, 0.8);
-      this.rainLo = mkRain('lowpass', 420, 0.5);
-    }
+    // rain: bright patter + low wash, silent until a squall
+    this.rainHi = mkLayer({ kind: 'rain', type: 'bandpass', freq: 3200, q: 0.8, rate: 1.7 });
+    this.rainLo = mkLayer({ kind: 'rain', freq: 420, q: 0.5, rate: 1.7 });
 
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, ctx.currentTime, 1.2);
   }
 
-  setRain(k) {
-    if (!this.ctx || !this.rainHi) return;
-    const now = this.ctx.currentTime;
-    this.rainHi.gain.setTargetAtTime(k * 0.5, now, 0.8);
-    this.rainLo.gain.setTargetAtTime(k * 0.28, now, 0.8);
+  // stereo pan of a world point relative to where the player faces
+  _spatial(x, z) {
+    const p = this.player;
+    if (!p) return { pan: 0, dist: 20 };
+    const dx = x - p.pos.x, dz = z - p.pos.z;
+    const dist = Math.hypot(dx, dz) || 1e-4;
+    const fx = -Math.sin(p.yaw), fz = -Math.cos(p.yaw);
+    const rx = -fz, rz = fx; // screen-right in world space
+    const pan = ((dx * rx + dz * rz) / dist) * Math.min(dist / 22, 1);
+    return { pan: Math.max(-1, Math.min(1, pan)), dist };
   }
 
   update(t) {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    for (const l of this.layers) {
-      const s = 0.5 + 0.5 * Math.sin((t / l.period) * Math.PI * 2 + l.phase);
-      const swell = Math.pow(s, l.pow);
-      l.g.gain.setTargetAtTime(0.06 + swell * l.gainMax, now, 0.25);
-      // surf brightens as it crashes
-      l.filter.frequency.setTargetAtTime(l.baseFreq * (0.6 + swell * 1.5), now, 0.3);
+    const p = this.player;
+    const storm = uniforms.uStorm.value;
+    const windAmp = uniforms.uWindAmp.value;
+
+    let hRel = 0.4;
+    if (p) {
+      hRel = Math.max(islandHeight(p.pos.x, p.pos.z) - uniforms.uTide.value, 0);
     }
+    const beach = 1 / (1 + hRel * 0.5); // 1 at the waterline, fades up-dune
+
+    for (const l of this.layers) {
+      if (l.kind === 'rain') continue; // driven by setRain
+      const s = 0.5 + 0.5 * Math.sin((t / (l.period || 10)) * Math.PI * 2 + (l.phase || 0));
+      const swell = Math.pow(s, l.pow || 1);
+
+      if (l.kind === 'zone') {
+        const zr = shoreRadius(l.az);
+        const zx = Math.cos(l.az) * zr, zz = Math.sin(l.az) * zr;
+        const { pan, dist } = this._spatial(zx, zz);
+        const prox = 1 / (1 + Math.max(dist - 10, 0) * 0.05);
+        l.pan.pan.setTargetAtTime(pan, now, 0.4);
+        l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * prox * (1 + 0.5 * storm), now, 0.25);
+        l.filter.frequency.setTargetAtTime(l.baseFreq * (0.6 + swell * 1.5), now, 0.3);
+      } else if (l.kind === 'lap') {
+        l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * beach, now, 0.3);
+        l.filter.frequency.setTargetAtTime(l.baseFreq * (0.7 + swell * 1.2), now, 0.3);
+      } else if (l.kind === 'wind') {
+        const g = (0.06 + swell * l.gainMax) * (1 + hRel * 0.22 + storm * 2.4);
+        l.g.gain.setTargetAtTime(g, now, 0.5);
+      } else if (l.kind === 'rustle') {
+        let prox = 0, best = null;
+        if (p) {
+          let bd = 1e9;
+          for (const c of this.crowns) {
+            const dd = Math.hypot(c.x - p.pos.x, c.z - p.pos.z);
+            if (dd < bd) { bd = dd; best = c; }
+          }
+          prox = Math.pow(Math.max(1 - bd / 9, 0), 2);
+        }
+        const flutter = 0.55 + 0.45 * Math.sin(t * 2.1 + Math.sin(t * 3.3) * 1.4);
+        l.g.gain.setTargetAtTime(prox * flutter * (0.04 + 0.1 * windAmp), now, 0.25);
+        if (best) {
+          const { pan } = this._spatial(best.x, best.z);
+          l.pan.pan.setTargetAtTime(pan * 0.7, now, 0.3);
+        }
+      }
+    }
+  }
+
+  // a two-syllable "kee-yah" from a world position
+  gullCry(x, z) {
+    if (!this.ctx || this.muted) return;
+    const { pan, dist } = this._spatial(x, z);
+    if (dist > 95) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const amp = 0.26 / (1 + dist * 0.045);
+    const out = ctx.createStereoPanner();
+    out.pan.value = pan;
+    out.connect(this.master);
+    const syllables = [
+      [0, 1380, 920, 0.30],
+      [0.34, 1260, 800, 0.40],
+    ];
+    for (const [at, f0, f1, dur] of syllables) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = (f0 + f1) * 0.5;
+      bp.Q.value = 2.4;
+      const og = ctx.createGain();
+      og.gain.value = 0;
+      o.connect(bp).connect(og).connect(out);
+      o.frequency.setValueAtTime(f0, now + at);
+      o.frequency.exponentialRampToValueAtTime(f1, now + at + dur);
+      og.gain.setValueAtTime(0, now + at);
+      og.gain.linearRampToValueAtTime(amp, now + at + 0.06);
+      og.gain.setValueAtTime(amp * 0.85, now + at + dur - 0.12);
+      og.gain.linearRampToValueAtTime(0, now + at + dur);
+      o.start(now + at);
+      o.stop(now + at + dur + 0.05);
+    }
+  }
+
+  setRain(k) {
+    if (!this.ctx || !this.rainHi) return;
+    const now = this.ctx.currentTime;
+    this.rainHi.g.gain.setTargetAtTime(k * 0.5, now, 0.8);
+    this.rainLo.g.gain.setTargetAtTime(k * 0.28, now, 0.8);
   }
 
   setMuted(m) {

@@ -37,6 +37,8 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.08, 42000);
 
+const audio = new OceanAudio();
+
 // ---- world ----
 const sky = buildSky(scene, renderer, camera);
 const terrain = buildTerrain();
@@ -54,6 +56,7 @@ scene.add(footprints.mesh);
 
 const player = new Player(camera, canvas);
 player.onStep = footprints.stamp;
+audio.attachWorld(player, palms.trees.map((t) => t.crown));
 
 const crabs = buildCrabs(player, footprints);
 scene.add(crabs.group);
@@ -64,14 +67,12 @@ scene.add(boat.group);
 const fish = buildFish(player);
 scene.add(fish.group);
 
-const birds = buildBirds(scene, player);
+const birds = buildBirds(scene, player, audio);
 
 const turtle = buildTurtle(player, footprints);
 scene.add(turtle.group);
 
 applyAnisotropy(renderer);
-
-const audio = new OceanAudio();
 
 const weather = buildWeather(camera, audio);
 scene.add(weather.group);

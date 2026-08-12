@@ -46,7 +46,7 @@ function buildGullMesh(bodyMat, wingMat, beakMat) {
   return { group: g, wingL, wingR };
 }
 
-export function buildBirds(scene, player) {
+export function buildBirds(scene, player, audio) {
   const rand = mulberry32(808);
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.8 });
   const wingMat = new THREE.MeshStandardMaterial({
@@ -69,6 +69,7 @@ export function buildBirds(scene, player) {
       state: 'soar',
       stateT: 14 + rand() * 30 + i * 12,
       shy: 7, // flush when the player gets this close
+      cryT: 8 + rand() * 25,
       pos: new THREE.Vector3(),
       from: new THREE.Vector3(),
       ctrl: new THREE.Vector3(),
@@ -117,6 +118,11 @@ export function buildBirds(scene, player) {
         const z = Math.sin(b.a) * b.r;
         const y = b.h + Math.sin(t * 0.3 + b.glideSeed) * 3;
         b.pos.set(x, y, z);
+        b.cryT -= dt;
+        if (b.cryT <= 0) {
+          b.cryT = 16 + rand() * 32;
+          if (audio) audio.gullCry(x, z);
+        }
         b.yaw = -b.a - (b.speed > 0 ? 0 : Math.PI);
         b.group.rotation.z = 0.22 * Math.sign(b.speed);
         b.fold = Math.max(b.fold - dt * 2, 0);
@@ -207,6 +213,7 @@ export function buildBirds(scene, player) {
         if (pd < b.shy || soaked || b.stateT <= 0) {
           b.state = 'flush';
           b.stateT = 4.5;
+          if (audio) audio.gullCry(b.pos.x, b.pos.z); // indignant departure
           b.from.copy(b.pos);
           const away = Math.atan2(b.pos.z - player.pos.z, b.pos.x - player.pos.x);
           b.target.set(
