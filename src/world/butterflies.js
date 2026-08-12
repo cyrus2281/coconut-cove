@@ -26,12 +26,13 @@ export function buildButterflies(player) {
   const pos = [], uv = [], idx = [];
   const wing = (side) => {
     const base = pos.length / 3;
-    // body-edge front, tip front, tip back, body-edge back
+    // centerline front, tip front, tip back, centerline back — both wings
+    // share the x=0 hinge, so their painted roots meet with no gap
     const pts = [
-      [0.004 * side, 0, -0.030],
+      [0, 0, -0.030],
       [SPAN * side, 0.004, -0.048],
       [SPAN * side, 0.004, 0.028],
-      [0.004 * side, 0, 0.034],
+      [0, 0, 0.034],
     ];
     for (const p of pts) pos.push(...p);
     uv.push(0, 0, 1, 0, 1, 1, 0, 1);

@@ -84,8 +84,15 @@ export function buildTouchUI(player) {
   window.addEventListener('mouseup', unpress);
 
   return {
-    show() { root.classList.remove('hidden'); },
-    hide() { root.classList.add('hidden'); release(); },
+    show() {
+      root.classList.remove('hidden');
+      document.body.classList.add('touch-ui'); // CSS trims keycap hints
+    },
+    hide() {
+      root.classList.add('hidden');
+      document.body.classList.remove('touch-ui');
+      release();
+    },
     get active() { return !root.classList.contains('hidden'); },
   };
 }
