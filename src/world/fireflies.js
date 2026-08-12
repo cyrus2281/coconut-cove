@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, shoreRadius, lagoonInfo } from './island.js';
+import { islandHeight, shoreRadius, lagoonsInfo } from './island.js';
 import { glowDotTexture } from '../core/textures.js';
 
 const COUNT = 40;
@@ -19,14 +19,15 @@ export function buildFireflies(player) {
   const group = new THREE.Group();
   group.name = 'fireflies';
   const rand = mulberry32(subSeed('fireflies'));
-  const L = lagoonInfo();
+  const lagoons = lagoonsInfo();
 
   const flies = [];
   let guard = 0;
   while (flies.length < COUNT && guard++ < 4000) {
-    let x, z;
-    if (L && rand() < 0.42) {
-      // the lagoon crowd hangs just off the reeds, some right over the water
+    let x, z, L = null;
+    if (lagoons.length && rand() < 0.42) {
+      // the pond crowds hang just off the reeds, some right over the water
+      L = lagoons[Math.floor(rand() * lagoons.length)];
       const a = rand() * Math.PI * 2;
       const rr = L.rW * (0.55 + rand() * 0.9);
       x = L.x + Math.cos(a) * rr;
@@ -38,7 +39,7 @@ export function buildFireflies(player) {
       z = Math.sin(a) * rr;
       if (islandHeight(x, z) < 2.3) continue; // grass country only
     }
-    const ground = Math.max(islandHeight(x, z), L ? L.level : -99);
+    const ground = Math.max(islandHeight(x, z), L ? L.level : -99); // hover over pond water, not its bed
     // lantern hue: amber through yellow-green, one fly one color
     const hue = rand();
     flies.push({

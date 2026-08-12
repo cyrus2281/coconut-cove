@@ -6,7 +6,7 @@
 
 import * as THREE from 'three';
 import { uniforms } from '../core/env.js';
-import { islandHeight, lagoonInfo } from './island.js';
+import { islandHeight, lagoonsInfo } from './island.js';
 import { foamTexture } from '../core/textures.js';
 
 const VERT = /* glsl */`
@@ -94,12 +94,9 @@ void main() {
 }
 `;
 
-export function buildPond() {
-  const group = new THREE.Group();
-  group.name = 'pond';
-  const L = lagoonInfo();
-  if (!L) return { group, material: null };
-
+// one ring mesh per basin; every pond shares the one material (the shader
+// bakes depth per vertex, so it never needs to know which pond it shades)
+function pondGeometry(L) {
   // concentric rings, denser toward the rim where the waterline lives
   const RINGS = 30, SEGS = 84;
   const pos = [], depth = [], idx = [];
@@ -126,6 +123,14 @@ export function buildPond() {
   geo.setAttribute('aDepth', new THREE.Float32BufferAttribute(depth, 1));
   geo.setIndex(idx);
   geo.computeBoundingSphere();
+  return geo;
+}
+
+export function buildPond() {
+  const group = new THREE.Group();
+  group.name = 'pond';
+  const lagoons = lagoonsInfo();
+  if (!lagoons.length) return { group, material: null };
 
   const ripple = foamTexture();
   ripple.wrapS = ripple.wrapT = THREE.RepeatWrapping;
@@ -153,9 +158,11 @@ export function buildPond() {
     },
   });
 
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.name = 'pondSurface';
-  mesh.renderOrder = 1;
-  group.add(mesh);
+  for (const L of lagoons) {
+    const mesh = new THREE.Mesh(pondGeometry(L), material);
+    mesh.name = 'pondSurface';
+    mesh.renderOrder = 1;
+    group.add(mesh);
+  }
   return { group, material };
 }

@@ -73,15 +73,18 @@ export function buildHorizon() {
     group.add(m);
   };
 
-  // ---- the volcano ----
-  const vAz = pickAz();
-  const vDist = 2050 + rand() * 450;
-  const vx = Math.cos(vAz) * vDist, vz = Math.sin(vAz) * vDist;
-  const R = 350 + rand() * 80;
-  const H = 210 + rand() * 55;
-  const rCr = R * 0.16;
-  const dep = H * 0.10;
-  {
+  // ---- the volcanoes: always one, sometimes a smaller sibling ----
+  const volcanoes = [];
+  const nVolcanoes = 1 + (rand() < 0.4 ? 1 : 0);
+  for (let vi = 0; vi < nVolcanoes; vi++) {
+    const vAz = pickAz();
+    const vDist = 2050 + rand() * 450;
+    const vx = Math.cos(vAz) * vDist, vz = Math.sin(vAz) * vDist;
+    const shrink = vi === 0 ? 1 : 0.55 + rand() * 0.15;
+    const R = (350 + rand() * 80) * shrink;
+    const H = (210 + rand() * 55) * shrink;
+    const rCr = R * 0.16;
+    const dep = H * 0.10;
     const pts = [new THREE.Vector2(R, SKIRT)];
     for (let k = 1; k <= 10; k++) {
       const tt = k / 10; // concave stratovolcano flank
@@ -112,6 +115,7 @@ export function buildHorizon() {
       },
       { az: rand() * Math.PI * 2, depth: H * 0.055, from: H * 0.8, to: H * 0.97 }
     ));
+    volcanoes.push({ x: vx, z: vz, R, H, rCr, phase: rand() * 9 });
   }
 
   // ---- low sister islands, hull-down ----
@@ -150,37 +154,40 @@ export function buildHorizon() {
     }
   }
 
-  // ---- the smoke column ----
+  // ---- smoke columns + crater glows, one set per volcano ----
   const LIFE = 30, RISE = 13, DRIFT = 8;
   const smokeTexA = cloudTexture(73), smokeTexB = cloudTexture(74);
-  const puffs = [];
-  for (let i = 0; i < 6; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: i % 2 ? smokeTexA : smokeTexB,
-      color: new THREE.Color(0.6, 0.58, 0.57),
+  const glowTex = glowDotTexture();
+  for (const v of volcanoes) {
+    v.puffs = [];
+    const n = v === volcanoes[0] ? 6 : 4; // the sibling smokes more shyly
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: i % 2 ? smokeTexA : smokeTexB,
+        color: new THREE.Color(0.6, 0.58, 0.57),
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        fog: true,
+      }));
+      group.add(s);
+      v.puffs.push({ s, off: i / n, wig: rand() * 6.3 });
+    }
+    // crater sky-glow: from sea level you can't see into the throat, so the
+    // ember light reads as a warm halo hanging just above the rim at night
+    v.glow = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: glowTex,
+      color: new THREE.Color(1.0, 0.42, 0.18),
       transparent: true,
       opacity: 0,
       depthWrite: false,
-      fog: true,
+      blending: THREE.AdditiveBlending,
+      fog: false,
     }));
-    group.add(s);
-    puffs.push({ s, off: i / 6, wig: rand() * 6.3 });
+    v.glow.scale.set(v.rCr * 3.2, v.rCr * 1.4, 1);
+    v.glow.position.set(v.x, v.H + v.rCr * 0.3, v.z);
+    group.add(v.glow);
   }
-
-  // crater sky-glow: from sea level you can't see into the throat, so the
-  // ember light reads as a warm halo hanging just above the rim at night
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowDotTexture(),
-    color: new THREE.Color(1.0, 0.42, 0.18),
-    transparent: true,
-    opacity: 0,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-    fog: false,
-  }));
-  glow.scale.set(rCr * 3.2, rCr * 1.4, 1);
-  glow.position.set(vx, H + rCr * 0.3, vz);
-  group.add(glow);
 
   const _smoke = new THREE.Color(), _ember = new THREE.Color();
 
@@ -188,29 +195,39 @@ export function buildHorizon() {
     const night = uniforms.uNightF.value;
     const storm = uniforms.uStorm.value;
     const wind = uniforms.uWindDir.value;
-    const flick = 0.72 + 0.28 * (0.6 * Math.sin(t * 1.9) + 0.4 * Math.sin(t * 4.7 + 1.3));
 
-    for (const p of puffs) {
-      const k = ((t / LIFE) + p.off) % 1;
-      const age = k * LIFE;
-      p.s.position.set(
-        vx + wind.x * age * DRIFT + Math.sin(age * 0.5 + p.wig) * 14,
-        H + 4 + age * RISE,
-        vz + wind.y * age * DRIFT + Math.cos(age * 0.4 + p.wig) * 14
-      );
-      const w = 65 + age * 6.5;
-      p.s.scale.set(w, w * 0.9, 1);
-      const emberK = Math.max(0, 1 - k / 0.25) * night;
-      p.s.material.opacity = 0.4 * sstep(0, 0.06, k) * Math.pow(1 - k, 1.5)
-        * (1 - storm * 0.45) * (1 + emberK * 0.4);
-      // day: pale ash gray; night: near-black, except the crater-lit base
-      _smoke.setRGB(0.6, 0.58, 0.57).multiplyScalar(0.22 + 0.78 * (1 - night));
-      _ember.setRGB(1.0, 0.35, 0.16);
-      p.s.material.color.copy(_smoke).lerp(_ember, emberK * flick * 0.85);
+    for (const v of volcanoes) {
+      const flick = 0.72 + 0.28
+        * (0.6 * Math.sin(t * 1.9 + v.phase) + 0.4 * Math.sin(t * 4.7 + 1.3 + v.phase));
+      const puffW = v.R / 390; // the sibling's column scales with its cone
+
+      for (const p of v.puffs) {
+        const k = ((t / LIFE) + p.off) % 1;
+        const age = k * LIFE;
+        p.s.position.set(
+          v.x + wind.x * age * DRIFT + Math.sin(age * 0.5 + p.wig) * 14,
+          v.H + 4 + age * RISE * puffW,
+          v.z + wind.y * age * DRIFT + Math.cos(age * 0.4 + p.wig) * 14
+        );
+        const w = (65 + age * 6.5) * puffW;
+        p.s.scale.set(w, w * 0.9, 1);
+        const emberK = Math.max(0, 1 - k / 0.25) * night;
+        p.s.material.opacity = 0.4 * sstep(0, 0.06, k) * Math.pow(1 - k, 1.5)
+          * (1 - storm * 0.45) * (1 + emberK * 0.4);
+        // day: pale ash gray; night: near-black, except the crater-lit base
+        _smoke.setRGB(0.6, 0.58, 0.57).multiplyScalar(0.22 + 0.78 * (1 - night));
+        _ember.setRGB(1.0, 0.35, 0.16);
+        p.s.material.color.copy(_smoke).lerp(_ember, emberK * flick * 0.85);
+      }
+
+      v.glow.material.opacity = night * (0.26 + 0.12 * flick) * (1 - storm * 0.85);
     }
-
-    glow.material.opacity = night * (0.26 + 0.12 * flick) * (1 - storm * 0.85);
   }
 
-  return { group, update, volcano: { x: vx, z: vz, h: H } };
+  const v0 = volcanoes[0];
+  return {
+    group, update,
+    volcano: { x: v0.x, z: v0.z, h: v0.H },
+    volcanoCount: volcanoes.length,
+  };
 }

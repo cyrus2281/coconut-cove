@@ -47,7 +47,9 @@ function buildGullMesh(bodyMat, wingMat, beakMat) {
   return { group: g, wingL, wingR };
 }
 
-export function buildBirds(scene, player, audio) {
+export function buildBirds(player, audio) {
+  const group = new THREE.Group();
+  group.name = 'gulls';
   const rand = mulberry32(subSeed('gulls'));
   const bodyMat = new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.8 });
   const wingMat = new THREE.MeshStandardMaterial({
@@ -56,9 +58,10 @@ export function buildBirds(scene, player, audio) {
   const beakMat = new THREE.MeshStandardMaterial({ color: 0xd98a2b, roughness: 0.7 });
 
   const gulls = [];
-  for (let i = 0; i < 3; i++) {
+  const N = 2 + Math.floor(rand() * 4); // 2-5 gulls, the seed decides
+  for (let i = 0; i < N; i++) {
     const parts = buildGullMesh(bodyMat, wingMat, beakMat);
-    scene.add(parts.group);
+    group.add(parts.group);
     gulls.push({
       ...parts,
       r: 34 + rand() * 55,
@@ -261,6 +264,7 @@ export function buildBirds(scene, player, audio) {
   }
 
   const api = {
+    group,
     update: (t, dt) => update.call(api, t, dt),
     gulls,
     _flap(b, angle) {

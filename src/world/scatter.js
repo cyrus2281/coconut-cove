@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, Simplex2 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
-import { islandHeight, islandNormal, shoreRadius, cayCenter, lagoonInfo, lagoonFreeboard } from './island.js';
+import { islandHeight, islandNormal, shoreRadius, cayCenter, lagoonInfo, lagoonsInfo, lagoonFreeboard } from './island.js';
 import { shellTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
 import { figBase } from './fig.js';
@@ -573,53 +573,57 @@ function placeCairn(group) {
 // Reeds crowding the lagoon's wet margin: taller, stiffer and greener than
 // dune grass, standing with their feet in the shallows.
 function placeReeds(group) {
-  const L = lagoonInfo();
-  if (!L) return;
+  const lagoons = lagoonsInfo();
+  if (!lagoons.length) return;
   const rand = mulberry32(subSeed('reeds'));
   const data = new MeshData();
-  let clumps = 0;
-  for (let attempt = 0; attempt < 5000 && clumps < 75; attempt++) {
-    const a = rand() * Math.PI * 2;
-    const rr = L.rW * (0.76 + rand() * 0.42);
-    const x = L.x + Math.cos(a) * rr, z = L.z + Math.sin(a) * rr;
-    const fb = lagoonFreeboard(x, z);
-    if (fb > 0.14 || fb < -0.45) continue;   // the wet margin only
-    clumps++;
-    const blades = 6 + Math.floor(rand() * 7);
-    const phase = rand() * Math.PI * 2;
-    for (let b = 0; b < blades; b++) {
-      const ba = rand() * Math.PI * 2;
-      const off = rand() * 0.22;
-      const bx = x + Math.cos(ba) * off, bz = z + Math.sin(ba) * off;
-      const by = islandHeight(bx, bz) - 0.02;
-      const hgt = 0.55 + rand() * 0.75;
-      const lean = 0.1 + rand() * 0.28;
-      const la = rand() * Math.PI * 2;
-      const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
-      const w0 = 0.009 + rand() * 0.006;
-      const g0 = 0.7 + rand() * 0.45;
-      const rows = [];
-      const SEGS = 3;
-      for (let s = 0; s <= SEGS; s++) {
-        const t = s / SEGS;
-        const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
-        const py = by + hgt * t * (1 - lean * 0.3 * t);
-        const w = w0 * (1 - t * 0.9);
-        // green at the base, sun-bleached toward the tip
-        const col = [0.16 * g0 + t * 0.26, 0.30 * g0 + t * 0.22, 0.11 * g0 + t * 0.07];
-        const fl = t * t * 0.5;
-        const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
-        rows.push([
-          data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
-          data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
-        ]);
-      }
-      for (let s = 0; s < SEGS; s++) {
-        data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
+  for (const L of lagoons) {
+    // clump budget follows the pond's shoreline length
+    const budget = Math.round(75 * Math.min(L.rW / 7.5, 1));
+    let clumps = 0;
+    for (let attempt = 0; attempt < 5000 && clumps < budget; attempt++) {
+      const a = rand() * Math.PI * 2;
+      const rr = L.rW * (0.76 + rand() * 0.42);
+      const x = L.x + Math.cos(a) * rr, z = L.z + Math.sin(a) * rr;
+      const fb = lagoonFreeboard(x, z);
+      if (fb > 0.14 || fb < -0.45) continue;   // the wet margin only
+      clumps++;
+      const blades = 6 + Math.floor(rand() * 7);
+      const phase = rand() * Math.PI * 2;
+      for (let b = 0; b < blades; b++) {
+        const ba = rand() * Math.PI * 2;
+        const off = rand() * 0.22;
+        const bx = x + Math.cos(ba) * off, bz = z + Math.sin(ba) * off;
+        const by = islandHeight(bx, bz) - 0.02;
+        const hgt = 0.55 + rand() * 0.75;
+        const lean = 0.1 + rand() * 0.28;
+        const la = rand() * Math.PI * 2;
+        const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
+        const w0 = 0.009 + rand() * 0.006;
+        const g0 = 0.7 + rand() * 0.45;
+        const rows = [];
+        const SEGS = 3;
+        for (let s = 0; s <= SEGS; s++) {
+          const t = s / SEGS;
+          const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
+          const py = by + hgt * t * (1 - lean * 0.3 * t);
+          const w = w0 * (1 - t * 0.9);
+          // green at the base, sun-bleached toward the tip
+          const col = [0.16 * g0 + t * 0.26, 0.30 * g0 + t * 0.22, 0.11 * g0 + t * 0.07];
+          const fl = t * t * 0.5;
+          const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
+          rows.push([
+            data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
+            data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
+          ]);
+        }
+        for (let s = 0; s < SEGS; s++) {
+          data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
+        }
       }
     }
   }
-  if (!clumps) return;
+  if (!data.pos.length) return;
   const mat = windify(new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.62, side: THREE.DoubleSide,
   }), 'reed');

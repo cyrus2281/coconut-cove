@@ -39,7 +39,6 @@ import { OceanAudio } from './audio.js';
 const canvas = document.getElementById('scene');
 const overlay = document.getElementById('overlay');
 const enterBtn = document.getElementById('enter');
-const enterTouchBtn = document.getElementById('enterTouch');
 const muteBtn = document.getElementById('mute');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -105,11 +104,32 @@ function buildWorldNow() {
   scene.add(crabs.group);
   const fish = buildFish(player);
   scene.add(fish.group);
+  const birds = buildBirds(player, audio);
+  scene.add(birds.group);
+  // the seed decides how many turtles call this island home
+  const turtles = (() => {
+    const tr = mulberry32(subSeed('turtleCount'));
+    const n = 1 + (tr() < 0.35 ? 1 : 0);
+    const list = [];
+    const g = new THREE.Group();
+    g.name = 'turtles';
+    for (let i = 0; i < n; i++) {
+      const tu = buildTurtle(player, footprints, i ? String(i) : '');
+      g.add(tu.group);
+      list.push(tu);
+    }
+    return {
+      group: g, list,
+      update(t, dt) { for (const tu of list) tu.update(t, dt); },
+    };
+  })();
+  scene.add(turtles.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
   return {
     terrain, heightTex, ocean, pond, horizon, palms, fig, scatterG,
     campfire, fireflies, butterflies, coconuts, hammock, crabs, fish,
+    birds, turtles,
   };
 }
 
@@ -152,6 +172,7 @@ function rebuildWorld() {
       world.palms.group, world.fig.group, world.scatterG, world.campfire.group,
       world.fireflies.group, world.butterflies.group, world.coconuts.group,
       world.hammock.group, world.crabs.group, world.fish.group,
+      world.birds.group, world.turtles.group,
     ]) {
       scene.remove(obj);
       disposeDeep(obj);
@@ -170,11 +191,6 @@ world = buildWorldNow();
 
 const boat = buildBoat();
 scene.add(boat.group);
-
-const birds = buildBirds(scene, player, audio);
-
-const turtle = buildTurtle(player, footprints);
-scene.add(turtle.group);
 
 const weather = buildWeather(camera, audio);
 scene.add(weather.group);
@@ -224,8 +240,11 @@ function enterWorld(withTouch = false) {
   if (withTouch) touchUI.show();
   else player.requestLock();
 }
-enterBtn.addEventListener('click', () => enterWorld(false));
-enterTouchBtn.addEventListener('click', () => enterWorld(true));
+// one enter button for everyone: if a finger has touched the page, the
+// tap brings the thumb controls along (no separate mobile button)
+let touchIntent = false;
+window.addEventListener('touchstart', () => { touchIntent = true; }, { passive: true });
+enterBtn.addEventListener('click', () => enterWorld(touchIntent));
 canvas.addEventListener('click', () => {
   if (!player.enabled || touchUI.active) return;
   if (document.pointerLockElement !== canvas) player.requestLock();
@@ -237,7 +256,7 @@ canvas.addEventListener('touchstart', () => {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') {
     audio.setMuted(!audio.muted);
-    muteBtn.textContent = audio.muted ? '🔇' : '🔊';
+    muteBtn.classList.toggle('muted', audio.muted);
   } else if (e.code === 'KeyR' && player.enabled) {
     regenerateIsland();
   } else if (e.code === 'KeyE') {
@@ -247,7 +266,7 @@ window.addEventListener('keydown', (e) => {
 muteBtn.addEventListener('click', () => {
   muteBtn.blur(); // else Space (jump) re-clicks it
   audio.setMuted(!audio.muted);
-  muteBtn.textContent = audio.muted ? '🔇' : '🔊';
+  muteBtn.classList.toggle('muted', audio.muted);
 });
 
 window.addEventListener('resize', () => {
@@ -268,7 +287,7 @@ renderer.setAnimationLoop(() => {
 
   uniforms.uTime.value = t;
   player.update(dt);
-  birds.update(t, dt);
+  world.birds.update(t, dt);
   sky.update(dt, t);
   world.crabs.update(t, dt);
   world.campfire.update(t, dt);
@@ -279,7 +298,7 @@ renderer.setAnimationLoop(() => {
   world.horizon.update(t);
   boat.update(t);
   world.fish.update(t, dt);
-  turtle.update(t, dt);
+  world.turtles.update(t, dt);
   weather.update(t, dt);
   audio.update(t);
 
@@ -306,7 +325,11 @@ const VIEWS = {
   sun: { pos: [-20, 2.2, 38], yaw: 2.2, pitch: -0.02 },
 };
 window.__beach = {
-  scene, renderer, camera, player, uniforms, audio, footprints, sky, boat, birds, turtle, weather,
+  scene, renderer, camera, player, uniforms, audio, footprints, sky, boat, weather,
+  get birds() { return world.birds; },
+  get turtles() { return world.turtles; },
+  get horizon() { return world.horizon; },
+  get turtle() { return world.turtles.list[0]; },
   get crabs() { return world.crabs; },
   get fish() { return world.fish; },
   get campfire() { return world.campfire; },

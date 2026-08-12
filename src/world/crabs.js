@@ -119,13 +119,24 @@ export function buildCrabs(player, footprints) {
   group.name = 'crabs';
 
   const crabs = [];
-  // one crab per surge beach, tinted by the seed
+  // one crab per surge beach, tinted by the seed...
   const tintRand = mulberry32(subSeed('crabTints'));
   const tint = () => new THREE.Color().setHSL(0.05 + tintRand() * 0.06, 0.5 + tintRand() * 0.2, 0.42 + tintRand() * 0.12);
   const defs = [
     { az: ZONES[0].az - 0.12, tint: tint(), chir: 1 },
     { az: ZONES[1].az + 0.08, tint: tint(), chir: -1 },
   ];
+  // ...and some islands are simply crabbier: up to two more on their own
+  // stretches of beach, so the population runs 2-4 with the seed
+  const nRand = mulberry32(subSeed('crabCount'));
+  const extras = nRand() < 0.55 ? 1 + (nRand() < 0.4 ? 1 : 0) : 0;
+  for (let e = 0; e < extras; e++) {
+    defs.push({
+      az: nRand() * Math.PI * 2,
+      tint: tint(),
+      chir: nRand() < 0.5 ? 1 : -1,
+    });
+  }
   for (let i = 0; i < defs.length; i++) {
     const def = defs[i];
     const rand = mulberry32(subSeed('crab' + i));

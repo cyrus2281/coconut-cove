@@ -34,8 +34,10 @@ export const uniforms = {
   uRainWet: { value: 0 }, // rain-soaked ground 0..1 (rises with rain, dries slowly)
   uFogColor: { value: FOG_COLOR.clone() },
   uFogDensity: { value: FOG_DENSITY },
-  // interior freshwater lagoon: (centerX, centerZ, outerRadius, surfaceY).
-  // radius 0 = this island has none; island.js owns it, the sand and pond
-  // shaders read it to know where standing fresh water is.
+  // interior freshwater ponds: (centerX, centerZ, outerRadius, surfaceY).
+  // radius 0 = absent; island.js owns them, the sand and pond shaders read
+  // them to know where standing fresh water is. Two slots: the main pond
+  // and the smaller sister pond some islands roll.
   uLagoon: { value: new THREE.Vector4(0, 0, 0, 0) },
+  uLagoon2: { value: new THREE.Vector4(0, 0, 0, 0) },
 };
