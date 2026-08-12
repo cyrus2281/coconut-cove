@@ -13,10 +13,10 @@ module is written seed-ready along the way).
 - [x] **Phase 2 — Tides**: semidiurnal `uTide` (A=0.45 m, two cycles per 12-min day, `tideFromTod`); ocean lift, tide-aware depth terms, swash heights relative to the live waterline, `sw_tideSince` falling-tide damp apron (dries ~3× slower than swash), player wade/prints + crab band follow the tide; `__beach.tide()`
 - [x] **Phase 3 — Offshore sandbar islet**: cay at az 0.95, ~38 m past the shoreline (crown ≈ +0.25 m, smooth-max dome); a tenth of all shell/pebble scatter washes up on it; verified wadeable at low tide (crossed to r=99), cut off at high (blocked at r=55)
 - [x] **Phase 4 — Wave push physics**: `runupVel` (analytic d/dt of the run-up line) biases the player's velocity target — bore carries ~3 m up-beach, backwash tugs back, scaled by sheet depth and fading in standing water; jump to escape
-- [ ] **Phase 5 — Beach life**
-  - [ ] Crab footprint trails: footprint atlas + per-instance kind (human/crab/turtle), crabs stamp tiny tracks
-  - [ ] Fish schools: 2 instanced schools patrolling the shelf (depth 0.6–2.5 m, tide-aware), burst-flee from the wading player
-  - [ ] Gulls that land: soar → glide in → land (folded wings) → hop/peck → flush when approached
+- [x] **Phase 5 — Beach life**
+  - [x] Crab footprint trails: 3-cell track atlas (foot/crab/turtle) + per-instance `aKind`/size, buffer 1024; crabs stitch tracks that waves wash
+  - [x] Fish schools: 2 instanced schools; anchors patrol the shelf and slide with the tide to hold depth; verified flee (mean dist 2.2→4.1 m)
+  - [x] Gulls that land: soar → bezier glide-in → folded-wing ground hops/pecks → flush at 7 m or when the tide soaks their patch (traced full cycle)
 - [ ] **Phase 6 — Sea turtle at night**: on random nights swim in → haul out → dig (sand flicks + pit) → rest → return before dawn; wide track pairs the tide erases
 - [ ] **Phase 7 — Passing rain squall**: weather director (clear → building → squall → clearing), instanced rain streaks, gray dimpled water, whole-island wetting via `uRainWet`, rain audio layer
 - [ ] **Phase 8 — Positional audio**: stereo-panned distance-based surf/wind, palm rustle under crowns, synthesized gull cries, rain overhead

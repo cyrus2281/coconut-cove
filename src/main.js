@@ -12,6 +12,7 @@ import { buildBirds } from './world/birds.js';
 import { buildFootprints } from './world/footprints.js';
 import { buildCrabs } from './world/crabs.js';
 import { buildBoat } from './world/boat.js';
+import { buildFish } from './world/fish.js';
 import { Player } from './player.js';
 import { buildTouchUI } from './touchui.js';
 import { OceanAudio } from './audio.js';
@@ -44,7 +45,6 @@ scene.add(ocean.group);
 const palms = buildPalms();
 scene.add(palms.group);
 scene.add(buildScatter());
-const birds = buildBirds(scene);
 sky.attachWater(ocean.material);
 
 const footprints = buildFootprints();
@@ -53,11 +53,16 @@ scene.add(footprints.mesh);
 const player = new Player(camera, canvas);
 player.onStep = footprints.stamp;
 
-const crabs = buildCrabs(player);
+const crabs = buildCrabs(player, footprints);
 scene.add(crabs.group);
 
 const boat = buildBoat();
 scene.add(boat.group);
+
+const fish = buildFish(player);
+scene.add(fish.group);
+
+const birds = buildBirds(scene, player);
 
 applyAnisotropy(renderer);
 
@@ -116,6 +121,7 @@ renderer.setAnimationLoop(() => {
   sky.update(dt, t);
   crabs.update(t, dt);
   boat.update(t);
+  fish.update(t, dt);
   audio.update(t);
 
   renderer.render(scene, camera);
@@ -131,7 +137,7 @@ const VIEWS = {
   sun: { pos: [-20, 2.2, 38], yaw: 2.2, pitch: -0.02 },
 };
 window.__beach = {
-  scene, renderer, camera, player, uniforms, audio, crabs, footprints, sky, boat,
+  scene, renderer, camera, player, uniforms, audio, crabs, footprints, sky, boat, fish, birds,
   fps: () => Math.round(fpsEMA),
   info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, fps: Math.round(fpsEMA) }),
   height: islandHeight,

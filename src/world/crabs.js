@@ -113,7 +113,7 @@ function beachPoint(homeAz, spread, rand, hMin = 0.12, hMax = 0.95) {
   return null;
 }
 
-export function buildCrabs(player) {
+export function buildCrabs(player, footprints) {
   const group = new THREE.Group();
   group.name = 'crabs';
 
@@ -144,6 +144,8 @@ export function buildCrabs(player) {
       yaw: 0,
       gait: 0,
       bob: 0,
+      trailAcc: 0,
+      trailSide: 0,
     });
   }
 
@@ -208,6 +210,13 @@ export function buildCrabs(player) {
         if (nh - tide > -0.02 && nh - tide < 1.5) {
           c.pos.set(nx, nz);
           c.h = nh;
+          // tiny stitch tracks in the crab's wake
+          c.trailAcc += c.speed * dt;
+          if (footprints && c.trailAcc > 0.14) {
+            c.trailAcc = 0;
+            c.trailSide = 1 - c.trailSide;
+            footprints.stamp(nx, nz, nh, c.dir.x, c.dir.y, c.trailSide, 1, 0.5);
+          }
         } else {
           c.timer = 0; // walked off the band — pick a new plan
         }

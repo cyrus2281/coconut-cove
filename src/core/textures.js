@@ -151,41 +151,65 @@ export function sandTextures() {
 }
 
 // ---------------------------------------------------------------- footprints
-// Bare-foot decal: R-channel mask + a normal map with a pressed-in sole and a
-// slightly raised rim of displaced sand. Toes are painted toward canvas
-// bottom, which faces the walking direction after the decal quad's rotateX.
+// Track decal atlas, three cells side by side: bare foot | crab stitches |
+// turtle crawl. R-channel mask + a normal map with pressed-in marks and a
+// slightly raised rim of displaced sand. Marks are painted toward canvas
+// bottom = the direction of travel after the decal quad's rotateX.
 export function footprintTextures() {
-  const W = 128, H = 192;
+  const CW = 128, CH = 192, CELLS = 3;
+  const W = CW * CELLS, H = CH;
 
-  const paintFoot = (ctx, scale) => {
-    ctx.save();
-    ctx.translate(W / 2, H / 2);
-    ctx.scale(scale, scale);
-    ctx.translate(-W / 2, -H / 2);
-    ctx.fillStyle = '#fff';
-    const ell = (x, y, rx, ry, rot = 0) => {
-      ctx.beginPath();
-      ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
-      ctx.fill();
-    };
-    ell(64, 46, 19, 24);          // heel
-    ell(59, 92, 15, 27, 0.08);    // arch (narrow, shifted inward)
-    ell(66, 133, 26, 23, -0.06);  // ball
-    // toes: big toe inboard (right foot; the left is a mirrored instance)
-    ell(41, 165, 9, 10);
-    ell(58, 171, 6.6, 7);
-    ell(73, 172, 5.6, 6);
-    ell(86, 170, 5, 5.4);
-    ell(98, 166, 4.4, 4.8);
-    ctx.restore();
-  };
+  const painters = [
+    (ctx, ell) => { // bare foot (right; the left is a mirrored instance)
+      ell(64, 46, 19, 24);          // heel
+      ell(59, 92, 15, 27, 0.08);    // arch (narrow, shifted inward)
+      ell(66, 133, 26, 23, -0.06);  // ball
+      ell(41, 165, 9, 10);          // toes, big toe inboard
+      ell(58, 171, 6.6, 7);
+      ell(73, 172, 5.6, 6);
+      ell(86, 170, 5, 5.4);
+      ell(98, 166, 4.4, 4.8);
+    },
+    (ctx, ell) => { // crab: rows of leg pricks flanking the travel axis
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < 4; i++) {
+          const y = 40 + i * 34;
+          ell(64 + side * (26 + (i % 2) * 12), y, 8.5, 12, side * 0.5);
+        }
+      }
+      ell(48, 20, 7, 15, 0.15);    // claw ticks out front
+      ell(80, 20, 7, 15, -0.15);
+    },
+    (ctx, ell) => { // turtle: paired flipper gouges + broad body drag
+      ell(26, 58, 15, 25, 0.5);
+      ell(102, 58, 15, 25, -0.5);
+      ell(22, 142, 12, 21, 0.62);
+      ell(106, 142, 12, 21, -0.62);
+      ctx.globalAlpha = 0.45;
+      ell(64, 96, 22, 86);
+      ctx.globalAlpha = 1;
+    },
+  ];
 
   const renderField = (scale, blur) => {
     const [c, ctx] = makeCanvas(W, H);
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
     ctx.filter = `blur(${blur}px)`;
-    paintFoot(ctx, scale);
+    const ell = (x, y, rx, ry, rot = 0) => {
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    for (let cell = 0; cell < CELLS; cell++) {
+      ctx.save();
+      ctx.translate(cell * CW + CW / 2, CH / 2);
+      ctx.scale(scale, scale);
+      ctx.translate(-CW / 2, -CH / 2);
+      ctx.fillStyle = '#fff';
+      painters[cell](ctx, ell);
+      ctx.restore();
+    }
     ctx.filter = 'none';
     const data = ctx.getImageData(0, 0, W, H).data;
     const f = new Float32Array(W * H);
@@ -196,14 +220,14 @@ export function footprintTextures() {
   const inner = renderField(1.0, 2.5);
   const outer = renderField(1.24, 5);
 
-  // height: pressed-down sole + pushed-up rim of sand around it
+  // height: pressed-down marks + pushed-up rim of sand around them
   const height = new Float32Array(W * H);
   for (let i = 0; i < height.length; i++) {
     const rim = Math.max(outer.field[i] - inner.field[i], 0);
     height[i] = 0.5 - inner.field[i] * 0.42 + rim * 0.3;
   }
 
-  // mask: sole plus a faint rim presence so the bump reads at grazing light
+  // mask: marks plus a faint rim presence so the bump reads at grazing light
   const [mc, mctx] = makeCanvas(W, H);
   const img = mctx.createImageData(W, H);
   for (let i = 0; i < W * H; i++) {

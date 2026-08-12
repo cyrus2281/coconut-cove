@@ -12,7 +12,7 @@ import { swashUniforms, SWASH_GLSL } from './swash.js';
 import { footprintTextures } from '../core/textures.js';
 import { islandNormal } from './island.js';
 
-const MAX_PRINTS = 512;
+const MAX_PRINTS = 1024;
 const LIFE_SECONDS = 90;
 
 const VERT = /* glsl */ `
@@ -20,6 +20,7 @@ const VERT = /* glsl */ `
 attribute float aStamp;
 attribute float aH;
 attribute float aSide;
+attribute float aKind; // atlas cell: 0 foot, 1 crab, 2 turtle
 
 uniform float uTime;
 uniform float uTide;
@@ -34,10 +35,12 @@ ${SWASH_GLSL}
 
 varying vec2 vUv;
 varying float vFade;
+varying float vKind;
 varying vec4 vRotF; // instance right.xz, forward.xz (for normal mapping)
 
 void main() {
-  vUv = vec2(mix(uv.x, 1.0 - uv.x, aSide), uv.y);
+  vUv = vec2((mix(uv.x, 1.0 - uv.x, aSide) + aKind) / 3.0, uv.y);
+  vKind = aKind;
 
   vec4 ip = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
   float az = atan(ip.z, ip.x);
@@ -77,6 +80,7 @@ uniform float uSunI;
 
 varying vec2 vUv;
 varying float vFade;
+varying float vKind;
 varying vec4 vRotF;
 
 void main() {
@@ -101,8 +105,10 @@ void main() {
   vec3 base = vec3(0.44, 0.385, 0.315);
   vec3 col = base * (0.35 + 1.05 * ndl) * mix(vec3(1.0), uSunColor, 0.55) * max(uSunI, 0.12);
 
-  // sole darkens fully; the rim mostly just catches the relit normal
-  float alpha = (sole * 0.72 + (presence - sole) * 0.38) * vFade;
+  // sole darkens fully; the rim mostly just catches the relit normal.
+  // Crab stitches press lighter, turtle gouges a touch deeper.
+  float kindScale = vKind < 0.5 ? 1.0 : (vKind < 1.5 ? 0.75 : 1.1);
+  float alpha = (sole * 0.72 + (presence - sole) * 0.38) * vFade * kindScale;
   gl_FragColor = vec4(col, alpha);
 }
 `;
@@ -114,9 +120,11 @@ export function buildFootprints() {
   const stamps = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PRINTS).fill(-1e6), 1);
   const heights = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PRINTS), 1);
   const sides = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PRINTS), 1);
+  const kinds = new THREE.InstancedBufferAttribute(new Float32Array(MAX_PRINTS), 1);
   geo.setAttribute('aStamp', stamps);
   geo.setAttribute('aH', heights);
   geo.setAttribute('aSide', sides);
+  geo.setAttribute('aKind', kinds);
 
   const { mask, normal } = footprintTextures();
   const mat = new THREE.ShaderMaterial({
@@ -155,20 +163,22 @@ export function buildFootprints() {
   const m = new THREE.Matrix4();
   const right = new THREE.Vector3(), fwd = new THREE.Vector3();
 
-  function stamp(x, z, h, dirX, dirZ, side) {
+  function stamp(x, z, h, dirX, dirZ, side, kind = 0, size = 1) {
     const up = islandNormal(x, z);
     fwd.set(dirX, 0, dirZ).addScaledVector(up, -(dirX * up.x + dirZ * up.z)).normalize();
     right.crossVectors(up, fwd).normalize();
-    m.makeBasis(right, up, fwd);
+    m.makeBasis(right.multiplyScalar(size), up, fwd.multiplyScalar(size));
     m.setPosition(x, h + 0.013, z);
     mesh.setMatrixAt(cursor, m);
     stamps.setX(cursor, uniforms.uTime.value);
     heights.setX(cursor, h);
     sides.setX(cursor, side);
+    kinds.setX(cursor, kind);
     mesh.instanceMatrix.needsUpdate = true;
     stamps.needsUpdate = true;
     heights.needsUpdate = true;
     sides.needsUpdate = true;
+    kinds.needsUpdate = true;
     cursor = (cursor + 1) % MAX_PRINTS;
   }
 
