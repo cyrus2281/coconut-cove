@@ -79,6 +79,26 @@ export function runupNow(az, t) {
   return r;
 }
 
+// vertical velocity (m/s) of the surge run-up line: + while the bore rushes
+// up the beach, - during the backwash. Only the big zone waves count — the
+// ambient lap is too gentle to move a person.
+export function runupVel(az, t) {
+  let v = 0;
+  for (const z of ZONES) {
+    const g = angFall(az, z.az, z.width);
+    if (g <= 0.001) continue;
+    const u = (((t - z.phase) / z.period) % 1 + 1) % 1;
+    let s = 0;
+    if (u < SW_A) {
+      s = (SW_RISE_P / SW_A) * Math.pow(Math.max(u / SW_A, 1e-3), SW_RISE_P - 1);
+    } else if (u < SW_B) {
+      s = -(SW_FALL_P / (SW_B - SW_A)) * Math.pow((u - SW_A) / (SW_B - SW_A), SW_FALL_P - 1);
+    }
+    v += (z.height * g * s) / z.period;
+  }
+  return v;
+}
+
 export const SWASH_GLSL = /* glsl */ `
 const float SW_A = 0.30;      // rush-up fraction of the cycle
 const float SW_B = 0.85;      // end of backwash

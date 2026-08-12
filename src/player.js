@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { islandHeight, shoreRadius } from './world/island.js';
+import { runupNow, runupVel } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
 const EYE = 1.66;
@@ -123,10 +124,28 @@ export class Player {
     const submersion = Math.max(0, tide - ground);
     const drag = 1 / (1 + submersion * 1.1);
 
+    // surge push: standing in the swash sheet, the bore carries you up the
+    // beach and the backwash tugs you back out (jump to escape it)
+    let driftX = 0, driftZ = 0;
+    if (this.grounded) {
+      const azP = Math.atan2(this.pos.z, this.pos.x);
+      const rel = ground - tide;             // feet above the still waterline
+      const ru = runupNow(azP, uniforms.uTime.value);
+      if (rel > -0.6 && rel < ru) {
+        const rv = runupVel(azP, uniforms.uTime.value);
+        const sheet = THREE.MathUtils.clamp((ru - Math.max(rel, 0)) / 0.3, 0, 1);
+        const wade = 1 - THREE.MathUtils.clamp((-rel - 0.1) / 0.5, 0, 1);
+        // + = inland; horizontal sheet speed ~ run-up rate / beach slope
+        const speed = THREE.MathUtils.clamp(rv * 5.5, -1.35, 2.9) * sheet * wade;
+        driftX = -Math.cos(azP) * speed;
+        driftZ = -Math.sin(azP) * speed;
+      }
+    }
+
     // horizontal velocity with pleasant accel/decel
     const accel = this.grounded ? 34 : 8;
-    this.vel.x += (dir.x * target * drag - this.vel.x) * Math.min(accel * dt, 1);
-    this.vel.z += (dir.z * target * drag - this.vel.z) * Math.min(accel * dt, 1);
+    this.vel.x += (dir.x * target * drag + driftX - this.vel.x) * Math.min(accel * dt, 1);
+    this.vel.z += (dir.z * target * drag + driftZ - this.vel.z) * Math.min(accel * dt, 1);
 
     // gravity + jump
     this.vel.y -= GRAVITY * dt;

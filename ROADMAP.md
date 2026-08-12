@@ -12,7 +12,7 @@ module is written seed-ready along the way).
   - [x] Distant sailboat: procedural sloop circling at ~640 m, bob + heel, masthead light after dark
 - [x] **Phase 2 — Tides**: semidiurnal `uTide` (A=0.45 m, two cycles per 12-min day, `tideFromTod`); ocean lift, tide-aware depth terms, swash heights relative to the live waterline, `sw_tideSince` falling-tide damp apron (dries ~3× slower than swash), player wade/prints + crab band follow the tide; `__beach.tide()`
 - [x] **Phase 3 — Offshore sandbar islet**: cay at az 0.95, ~38 m past the shoreline (crown ≈ +0.25 m, smooth-max dome); a tenth of all shell/pebble scatter washes up on it; verified wadeable at low tide (crossed to r=99), cut off at high (blocked at r=55)
-- [ ] **Phase 4 — Wave push physics**: analytic swash velocity (d/dt of run-up) shoves the player up-beach on the bore, drags seaward on the backwash, scaled by submersion
+- [x] **Phase 4 — Wave push physics**: `runupVel` (analytic d/dt of the run-up line) biases the player's velocity target — bore carries ~3 m up-beach, backwash tugs back, scaled by sheet depth and fading in standing water; jump to escape
 - [ ] **Phase 5 — Beach life**
   - [ ] Crab footprint trails: footprint atlas + per-instance kind (human/crab/turtle), crabs stamp tiny tracks
   - [ ] Fish schools: 2 instanced schools patrolling the shelf (depth 0.6–2.5 m, tide-aware), burst-flee from the wading player
