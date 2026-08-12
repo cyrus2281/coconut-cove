@@ -4,6 +4,9 @@ A tiny tropical island you can walk around in the browser — **100% procedurall
 generated**, no downloaded assets. Built with [Three.js](https://threejs.org)
 and Vite.
 
+Created by [Cyrus Mobini](https://github.com/cyrus2281) ·
+[github.com/cyrus2281/coconut-cove](https://github.com/cyrus2281/coconut-cove)
+
 ![Coconut Cove](https://img.shields.io/badge/three.js-r180-049EF4?style=flat-square) ![vite](https://img.shields.io/badge/vite-6-646CFF?style=flat-square)
 
 ## Run it
