@@ -51,6 +51,21 @@ export function randomSeed() {
   return (Math.random() * 0xffffffff) >>> 0;
 }
 
+// Show the live seed in the address bar (replaceState: no history spam), so
+// the island you are standing on is always a copy-pasteable link. Clearing
+// the param hands the next page load back to the random-island preference.
+export function writeSeedParam(s) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('seed', String(s >>> 0));
+  window.history.replaceState(null, '', url);
+}
+
+export function clearSeedParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('seed');
+  window.history.replaceState(null, '', url);
+}
+
 // FNV/xxhash-flavored mix of the master seed and a domain name
 export function subSeed(name) {
   let h = (master ^ 0x9e3779b9) >>> 0;

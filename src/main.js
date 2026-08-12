@@ -5,7 +5,8 @@ import { uniforms, FOG_COLOR } from './core/env.js';
 import { applyAnisotropy } from './core/textures.js';
 import {
   getSeed, setSeed, randomSeed, subSeed,
-  DEFAULT_SEED, SEED_FROM_URL, readRandomPref, writeRandomPref,
+  DEFAULT_SEED, readRandomPref, writeRandomPref,
+  writeSeedParam, clearSeedParam,
 } from './core/seed.js';
 import { mulberry32 } from './core/rng.js';
 import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland } from './world/island.js';
@@ -147,27 +148,36 @@ applySeedMood(); // the seed picks the arrival hour + sky
 // ---- UI ----
 const touchUI = buildTouchUI(player);
 
-// island seed controls: ?seed=N pins an island (toggle hidden); otherwise
-// the checkbox regrows a random island live behind the title screen
-const seedRow = document.getElementById('seedRow');
+// island seed controls. Two intents, kept from colliding by who owns the URL:
+//   ⟳ new island  — roll one now and pin it in ?seed= (shareable, survives F5)
+//   random toggle  — sticky "roll a fresh island every load", so it drops the
+//                    ?seed= param (a pinned seed would otherwise win at boot)
 const seedToggle = document.getElementById('seedToggle');
 const seedTag = document.getElementById('seedTag');
+const regenBtn = document.getElementById('regen');
 function updateSeedTag() {
   seedTag.textContent = 'island #' + getSeed();
 }
 updateSeedTag();
-if (SEED_FROM_URL) {
-  seedRow.style.display = 'none';
-} else {
-  // sticky preference: while on, every page load rolls a fresh island
-  // (new shoreline, new hour, new weather)
-  seedToggle.checked = readRandomPref();
-  seedToggle.addEventListener('change', () => {
-    writeRandomPref(seedToggle.checked);
-    setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
-    rebuildWorld();
-  });
-}
+
+seedToggle.checked = readRandomPref();
+seedToggle.addEventListener('change', () => {
+  writeRandomPref(seedToggle.checked);
+  clearSeedParam();
+  setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
+  rebuildWorld();
+});
+
+regenBtn.addEventListener('click', () => {
+  // drop focus, or the next Space (jump) would re-trigger the button
+  regenBtn.blur();
+  regenBtn.classList.remove('spun');
+  void regenBtn.offsetWidth; // restart the glyph spin
+  regenBtn.classList.add('spun');
+  setSeed(randomSeed());
+  writeSeedParam(getSeed());
+  rebuildWorld();
+});
 
 function enterWorld(withTouch = false) {
   overlay.classList.add('hidden');
@@ -193,6 +203,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 muteBtn.addEventListener('click', () => {
+  muteBtn.blur(); // else Space (jump) re-clicks it
   audio.setMuted(!audio.muted);
   muteBtn.textContent = audio.muted ? '🔇' : '🔊';
 });
