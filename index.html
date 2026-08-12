@@ -34,6 +34,49 @@
       transition: background 0.25s;
     }
     #enter:hover { background: rgba(255, 235, 200, 0.28); }
+    #enterTouch {
+      font: inherit; font-size: 14px; letter-spacing: 0.1em;
+      padding: 9px 28px; cursor: pointer;
+      color: #f2ede2; background: transparent;
+      border: 1px solid rgba(242, 237, 226, 0.35); border-radius: 999px;
+      transition: background 0.25s;
+    }
+    #enterTouch:hover { background: rgba(255, 235, 200, 0.15); }
+
+    /* on-screen touch controls */
+    #touchui { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+    #touchui.hidden { display: none; }
+    #joy {
+      position: absolute;
+      left: calc(24px + env(safe-area-inset-left));
+      bottom: calc(24px + env(safe-area-inset-bottom));
+      width: 132px; height: 132px; border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.38);
+      background: rgba(10, 25, 35, 0.28);
+      backdrop-filter: blur(4px);
+      pointer-events: auto; touch-action: none;
+    }
+    #knob {
+      position: absolute; left: 50%; top: 50%;
+      width: 56px; height: 56px; margin: -28px 0 0 -28px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.55);
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+    }
+    #jumpBtn {
+      position: absolute;
+      right: calc(28px + env(safe-area-inset-right));
+      bottom: calc(40px + env(safe-area-inset-bottom));
+      width: 88px; height: 88px; border-radius: 50%;
+      font-size: 15px; letter-spacing: 0.12em;
+      font-family: ui-monospace, Menlo, monospace;
+      color: #fff; border: 2px solid rgba(255, 255, 255, 0.4);
+      background: rgba(10, 25, 35, 0.32);
+      backdrop-filter: blur(4px);
+      pointer-events: auto; touch-action: none;
+      -webkit-user-select: none; user-select: none;
+    }
+    #jumpBtn.pressed { background: rgba(255, 255, 255, 0.38); }
     #controls {
       display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
       font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
@@ -72,10 +115,16 @@
       <span><b>space</b>jump</span>
       <span><b>M</b>sound</span>
     </div>
+    <button id="enterTouch">📱 touch / mobile controls</button>
   </div>
 
   <div id="hud">
     <button id="mute" title="toggle ocean sound (M)">🔊</button>
+  </div>
+
+  <div id="touchui" class="hidden">
+    <div id="joy"><div id="knob"></div></div>
+    <button id="jumpBtn">JUMP</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

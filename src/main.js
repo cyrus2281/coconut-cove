@@ -12,11 +12,13 @@ import { buildBirds } from './world/birds.js';
 import { buildFootprints } from './world/footprints.js';
 import { buildCrabs } from './world/crabs.js';
 import { Player } from './player.js';
+import { buildTouchUI } from './touchui.js';
 import { OceanAudio } from './audio.js';
 
 const canvas = document.getElementById('scene');
 const overlay = document.getElementById('overlay');
 const enterBtn = document.getElementById('enter');
+const enterTouchBtn = document.getElementById('enterTouch');
 const muteBtn = document.getElementById('mute');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -58,17 +60,25 @@ applyAnisotropy(renderer);
 const audio = new OceanAudio();
 
 // ---- UI ----
-function enterWorld() {
+const touchUI = buildTouchUI(player);
+
+function enterWorld(withTouch = false) {
   overlay.classList.add('hidden');
   player.enabled = true;
   audio.start();
-  player.requestLock();
+  if (withTouch) touchUI.show();
+  else player.requestLock();
 }
-enterBtn.addEventListener('click', enterWorld);
+enterBtn.addEventListener('click', () => enterWorld(false));
+enterTouchBtn.addEventListener('click', () => enterWorld(true));
 canvas.addEventListener('click', () => {
-  if (!player.enabled) return;
+  if (!player.enabled || touchUI.active) return;
   if (document.pointerLockElement !== canvas) player.requestLock();
 });
+// anyone who starts touching the world gets the joystick automatically
+canvas.addEventListener('touchstart', () => {
+  if (player.enabled && !touchUI.active) touchUI.show();
+}, { passive: true });
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') {
     audio.setMuted(!audio.muted);

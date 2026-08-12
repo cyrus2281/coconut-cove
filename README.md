@@ -22,7 +22,7 @@ Open <http://localhost:5173>, click **walk the beach**.
 | `Shift` | run |
 | `Space` | jump |
 | `M` | toggle ocean sound |
-| touch | left half = move stick, right half = look |
+| touch | 📱 button on the title screen: on-screen joystick + JUMP, drag the world to look (auto-enables on first touch) |
 
 ## What's inside
 
@@ -46,8 +46,22 @@ Everything is generated at startup from seeded noise — geometry, textures
 - **Beach dressing** — instanced sea shells (spiral whelks, augers, scallops,
   clams), starfish, a pebble/shell-hash drift line, weathered boulders,
   driftwood, dune grass, seaweed wrack.
-- **Life & air** — gulls that flap and glide, drifting clouds, procedural
-  surf + wind audio.
+- **Footprints** — walking stamps alternating bare feet (instanced decals
+  with pressed-sole normal maps). They fade out over ~90 s, melt fast near
+  the waterline, and get washed away when a wave rolls over them.
+- **Surge zones** — two stretches of coast get long-period swash bores that
+  rush a few feet up the beach and drain back. One shared analytic run-up
+  model drives the water surface, the bore foam, the wet-sand line, and
+  footprint washout — no simulation state anywhere.
+- **Wet & dry sand** — sand darkens hard where water has recently been,
+  turns glossy, then dries back over ~35 s in a visible gradient, with
+  fizzing foam residue left behind each retreating wave.
+- **Day/night cycle** — a 12-minute day: golden afternoon, sunset palette,
+  starfield + moonlit night (one light plays sun and moon), dawn. The
+  ambient light is rebaked live from the sky as it changes.
+- **Life & air** — gulls that flap and glide, ghost crabs that scuttle
+  sideways, dodge you, and sprint uphill ahead of incoming surges, drifting
+  clouds, procedural surf + wind audio synced to the surge periods.
 
 ## Debug console
 
@@ -57,4 +71,7 @@ Everything is generated at startup from seeded noise — geometry, textures
 __beach.view('overview')        // aerial | beach | waterline | shells | palm | sun
 __beach.teleport(x, z, yaw, pitch)
 __beach.info()                  // { calls, tris, fps }
+__beach.setTod(0.86)            // time of day: 0.60 afternoon, 0.705 sunset, 0.86 night
+__beach.warp(30)                // fast-forward the world clock (30s)
+__beach.stampLine()             // lay a test track of footprints into the surge zone
 ```

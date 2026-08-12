@@ -59,41 +59,28 @@ export class Player {
       this._look(e.movementX, e.movementY);
     });
 
-    // touch: left half moves, right half looks
+    // touch: dragging on the world looks around; movement comes from the
+    // on-screen joystick (touchui.js), which writes touchMove/touchJump
     this.touchMove = new THREE.Vector2();
-    const touches = new Map();
+    this.touchJump = false;
+    const looks = new Map();
     dom.addEventListener('touchstart', (e) => {
       for (const t of e.changedTouches) {
-        touches.set(t.identifier, {
-          startX: t.clientX, startY: t.clientY,
-          x: t.clientX, y: t.clientY,
-          zone: t.clientX < window.innerWidth * 0.45 ? 'move' : 'look',
-        });
+        looks.set(t.identifier, { x: t.clientX, y: t.clientY });
       }
       e.preventDefault();
     }, { passive: false });
     dom.addEventListener('touchmove', (e) => {
       for (const t of e.changedTouches) {
-        const rec = touches.get(t.identifier);
+        const rec = looks.get(t.identifier);
         if (!rec) continue;
-        if (rec.zone === 'move') {
-          this.touchMove.set(
-            THREE.MathUtils.clamp((t.clientX - rec.startX) / 55, -1, 1),
-            THREE.MathUtils.clamp((t.clientY - rec.startY) / 55, -1, 1)
-          );
-        } else {
-          this._look((t.clientX - rec.x) * 2.2, (t.clientY - rec.y) * 2.2);
-        }
+        if (this.enabled) this._look((t.clientX - rec.x) * 2.2, (t.clientY - rec.y) * 2.2);
         rec.x = t.clientX; rec.y = t.clientY;
       }
       e.preventDefault();
     }, { passive: false });
     const endTouch = (e) => {
-      for (const t of e.changedTouches) {
-        const rec = touches.get(t.identifier);
-        if (rec && rec.zone === 'move') this.touchMove.set(0, 0);
-        touches.delete(t.identifier);
-      }
+      for (const t of e.changedTouches) looks.delete(t.identifier);
     };
     dom.addEventListener('touchend', endTouch);
     dom.addEventListener('touchcancel', endTouch);
@@ -141,7 +128,7 @@ export class Player {
 
     // gravity + jump
     this.vel.y -= GRAVITY * dt;
-    if (this.enabled && this.grounded && k.has('Space')) {
+    if (this.enabled && this.grounded && (k.has('Space') || this.touchJump)) {
       this.vel.y = JUMP * Math.sqrt(drag);
       this.grounded = false;
     }
