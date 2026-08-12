@@ -14,6 +14,7 @@ import {
 } from './world/island.js';
 import { buildPond } from './world/pond.js';
 import { buildFig } from './world/fig.js';
+import { buildCampfire } from './world/campfire.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
@@ -82,13 +83,16 @@ function buildWorldNow() {
   scene.add(fig.group);
   const scatterG = buildScatter();
   scene.add(scatterG);
+  const campfire = buildCampfire(); // after scatter: it camps beside the cairn
+  scene.add(campfire.group);
+  audio.attachFire(campfire.pos, campfire.fireK);
   const crabs = buildCrabs(player, footprints);
   scene.add(crabs.group);
   const fish = buildFish(player);
   scene.add(fish.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
-  return { terrain, heightTex, ocean, pond, palms, fig, scatterG, crabs, fish };
+  return { terrain, heightTex, ocean, pond, palms, fig, scatterG, campfire, crabs, fish };
 }
 
 function disposeDeep(obj) {
@@ -127,7 +131,8 @@ function rebuildWorld() {
   if (world) {
     for (const obj of [
       world.terrain, world.ocean.group, world.pond.group, world.palms.group,
-      world.fig.group, world.scatterG, world.crabs.group, world.fish.group,
+      world.fig.group, world.scatterG, world.campfire.group,
+      world.crabs.group, world.fish.group,
     ]) {
       scene.remove(obj);
       disposeDeep(obj);
@@ -243,6 +248,7 @@ renderer.setAnimationLoop(() => {
   birds.update(t, dt);
   sky.update(dt, t);
   world.crabs.update(t, dt);
+  world.campfire.update(t, dt);
   boat.update(t);
   world.fish.update(t, dt);
   turtle.update(t, dt);
@@ -275,6 +281,7 @@ window.__beach = {
   scene, renderer, camera, player, uniforms, audio, footprints, sky, boat, birds, turtle, weather,
   get crabs() { return world.crabs; },
   get fish() { return world.fish; },
+  get campfire() { return world.campfire; },
   seed: () => getSeed(),
   reseed(s) {
     setSeed(s === undefined ? randomSeed() : s);
@@ -295,6 +302,13 @@ window.__beach = {
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
   lagoon: () => lagoonInfo(),
+  // stand by the campfire
+  campview(bearing = 0.8, dist = 3.2) {
+    const c = world.campfire.pos;
+    const x = c.x + Math.cos(bearing) * dist, z = c.z + Math.sin(bearing) * dist;
+    this.teleport(x, z, Math.atan2(-(c.x - x), -(c.z - z)), -0.18);
+    return { fire: [+c.x.toFixed(1), +c.z.toFixed(1)], k: +world.campfire.fireK().toFixed(2) };
+  },
   // stand back from the big fig, looking at it
   figview(bearing = 2.2, dist = 14) {
     const f = world.fig;

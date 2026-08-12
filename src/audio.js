@@ -25,6 +25,12 @@ export class OceanAudio {
     this.crowns = crowns || [];
   }
 
+  // the campfire's place in the world + its live intensity (0..1)
+  attachFire(pos, fireK) {
+    this.firePos = pos;
+    this.fireK = fireK || (() => 1);
+  }
+
   start() {
     if (this.ctx) {
       if (this.ctx.state === 'suspended') this.ctx.resume();
@@ -83,6 +89,11 @@ export class OceanAudio {
     this.rainHi = mkLayer({ kind: 'rain', type: 'bandpass', freq: 3200, q: 0.8, rate: 1.7 });
     this.rainLo = mkLayer({ kind: 'rain', freq: 420, q: 0.5, rate: 1.7 });
 
+    // campfire: a low rushing bed; the pops are scheduled in update()
+    this.fireBed = mkLayer({ kind: 'fire', type: 'bandpass', freq: 820, q: 0.5, rate: 1.35 });
+    this.noiseBuf = buf;
+    this._nextPop = 0;
+
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, ctx.currentTime, 1.2);
   }
 
@@ -111,8 +122,37 @@ export class OceanAudio {
     }
     const beach = 1 / (1 + hRel * 0.5); // 1 at the waterline, fades up-dune
 
+    // campfire bed + crackle pops, from where the fire actually burns
+    if (this.firePos && this.fireBed) {
+      const k = this.fireK();
+      const { pan, dist } = this._spatial(this.firePos.x, this.firePos.z);
+      const prox = 1 / (1 + Math.max(dist - 2.5, 0) * 0.45);
+      this.fireBed.pan.pan.setTargetAtTime(pan, now, 0.3);
+      const crackleBed = 0.4 + 0.6 * Math.min(1, Math.abs(Math.sin(t * 1.7) + Math.sin(t * 2.9)) * 0.6);
+      this.fireBed.g.gain.setTargetAtTime(k * prox * 0.30 * crackleBed, now, 0.2);
+      // pops: sharp little bursts of high noise, denser up close
+      if (!this.muted && k > 0.15 && dist < 20 && t > this._nextPop) {
+        this._nextPop = t + 0.05 + Math.random() * 0.3 / Math.max(k, 0.2);
+        const src = this.ctx.createBufferSource();
+        src.buffer = this.noiseBuf;
+        src.playbackRate.value = 1.4 + Math.random() * 1.2;
+        const hp = this.ctx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 1800 + Math.random() * 2600;
+        const pg = this.ctx.createGain();
+        const amp = (0.10 + Math.random() * 0.22) * k * prox;
+        pg.gain.setValueAtTime(amp, now);
+        pg.gain.exponentialRampToValueAtTime(0.001, now + 0.03 + Math.random() * 0.05);
+        const pp = this.ctx.createStereoPanner();
+        pp.pan.value = pan;
+        src.connect(hp).connect(pg).connect(pp).connect(this.master);
+        src.start(now, Math.random() * 3.5, 0.09);
+      }
+    }
+
     for (const l of this.layers) {
       if (l.kind === 'rain') continue; // driven by setRain
+      if (l.kind === 'fire') continue; // driven above
       const s = 0.5 + 0.5 * Math.sin((t / (l.period || 10)) * Math.PI * 2 + (l.phase || 0));
       const swell = Math.pow(s, l.pow || 1);
 

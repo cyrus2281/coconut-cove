@@ -14,6 +14,10 @@ import { figBase } from './fig.js';
 
 let scatterNoise = null; // recreated per island inside buildScatter
 
+// where this island's cairn stands — the campfire pitches camp beside it
+let CAIRN_POS = null;
+export function cairnPos() { return CAIRN_POS ? { ...CAIRN_POS } : null; }
+
 // Find a point whose terrain height falls in [hMin, hMax]. A tenth of
 // everything washes up on the offshore cay instead of the main shoreline.
 function shorePoint(rand, hMin, hMax, rMin = -12, rMax = 8) {
@@ -493,6 +497,7 @@ function placeCairn(group) {
     if (fb && Math.hypot(x - fb.x, z - fb.z) < 6.5) continue;
     if (!best || h > best.h) best = { x, z, h };
   }
+  CAIRN_POS = best ? { x: best.x, z: best.z, h: best.h } : null;
   if (!best) return;
 
   const stones = [];
