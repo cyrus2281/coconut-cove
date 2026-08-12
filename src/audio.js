@@ -57,7 +57,35 @@ export class OceanAudio {
     mkLayer(950, 0.7, 17.0, -1.96, 0.55, 3.0);
     mkLayer(320, 0.4, 31, 7, 0.16, 1); // wind: long slow wander
 
+    // rain: bright patter + low wash, both silent until a squall
+    {
+      const mkRain = (type, freq, q) => {
+        const src = ctx.createBufferSource();
+        src.buffer = buf;
+        src.loop = true;
+        src.playbackRate.value = 1.7;
+        const filter = ctx.createBiquadFilter();
+        filter.type = type;
+        filter.frequency.value = freq;
+        filter.Q.value = q;
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        src.connect(filter).connect(g).connect(this.master);
+        src.start();
+        return g;
+      };
+      this.rainHi = mkRain('bandpass', 3200, 0.8);
+      this.rainLo = mkRain('lowpass', 420, 0.5);
+    }
+
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, ctx.currentTime, 1.2);
+  }
+
+  setRain(k) {
+    if (!this.ctx || !this.rainHi) return;
+    const now = this.ctx.currentTime;
+    this.rainHi.gain.setTargetAtTime(k * 0.5, now, 0.8);
+    this.rainLo.gain.setTargetAtTime(k * 0.28, now, 0.8);
   }
 
   update(t) {

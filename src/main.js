@@ -14,6 +14,7 @@ import { buildCrabs } from './world/crabs.js';
 import { buildBoat } from './world/boat.js';
 import { buildFish } from './world/fish.js';
 import { buildTurtle } from './world/turtle.js';
+import { buildWeather } from './world/weather.js';
 import { Player } from './player.js';
 import { buildTouchUI } from './touchui.js';
 import { OceanAudio } from './audio.js';
@@ -72,6 +73,9 @@ applyAnisotropy(renderer);
 
 const audio = new OceanAudio();
 
+const weather = buildWeather(camera, audio);
+scene.add(weather.group);
+
 // ---- UI ----
 const touchUI = buildTouchUI(player);
 
@@ -127,6 +131,7 @@ renderer.setAnimationLoop(() => {
   boat.update(t);
   fish.update(t, dt);
   turtle.update(t, dt);
+  weather.update(t, dt);
   audio.update(t);
 
   renderer.render(scene, camera);
@@ -142,7 +147,7 @@ const VIEWS = {
   sun: { pos: [-20, 2.2, 38], yaw: 2.2, pitch: -0.02 },
 };
 window.__beach = {
-  scene, renderer, camera, player, uniforms, audio, crabs, footprints, sky, boat, fish, birds, turtle,
+  scene, renderer, camera, player, uniforms, audio, crabs, footprints, sky, boat, fish, birds, turtle, weather,
   fps: () => Math.round(fpsEMA),
   info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, fps: Math.round(fpsEMA) }),
   height: islandHeight,
@@ -156,6 +161,7 @@ window.__beach = {
     level: +uniforms.uTide.value.toFixed(3),
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
+  rain: (on = true) => weather.rain(on),
   // lay a test track of prints marching down the beach into the surge zone
   stampLine(az = 1.55) {
     const ox = Math.cos(az), oz = Math.sin(az);

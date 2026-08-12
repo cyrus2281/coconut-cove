@@ -146,6 +146,7 @@ uniform vec3 uSkyHorizon;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uNightF;
+uniform float uStorm;
 uniform int uDebug;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
@@ -191,10 +192,14 @@ void main() {
   // instead of high-contrast reflection banding.
   float geoFade = 1.0 - 0.85 * smoothstep(180.0, 500.0, viewDist);
   vec3 dn = sampleDetailNormal(vWPos.xz);
+  // rain pocks the surface: fast-scrolling high-frequency jitter
+  float dimple = (texture2D(uFoamTex, vWPos.xz * 1.9 + uTime * vec2(2.9, 3.7)).r - 0.5)
+               + (texture2D(uFoamTex, vWPos.xz * 2.7 - uTime * vec2(3.4, 2.6)).r - 0.5);
+  float chop = 1.0 + 0.9 * uStorm;
   vec3 N = normalize(vec3(
-    vNormalGeo.x * geoFade + dn.x * (0.30 * detailFade + 0.045),
+    vNormalGeo.x * geoFade + dn.x * (0.30 * detailFade + 0.045) * chop + dimple * 0.34 * uStorm * detailFade,
     1.0,
-    vNormalGeo.z * geoFade + dn.y * (0.30 * detailFade + 0.045)
+    vNormalGeo.z * geoFade + dn.y * (0.30 * detailFade + 0.045) * chop + dimple * 0.30 * uStorm * detailFade
   ));
 
   float NdV = max(dot(N, V), 0.0);
@@ -209,6 +214,9 @@ void main() {
   float absorb = 1.0 - exp(-pathLen * 0.34);
   vec3 body = mix(uShallowColor, uDeepColor, 1.0 - exp(-depth * 0.30));
   body *= 0.45 + 0.55 * max(dot(vec3(0.0, 1.0, 0.0), uSunDir), 0.0);
+  // squalls drain the color out of the sea
+  float lum = dot(body, vec3(0.33, 0.4, 0.27));
+  body = mix(body, vec3(lum * 0.7, lum * 0.82, lum * 0.82), uStorm * 0.6);
 
   // sun-through-the-wave scatter when looking toward the light
   float scatter = pow(max(dot(V, -uSunDir + vec3(0.0, 0.35, 0.0)), 0.0), 3.0)
@@ -321,6 +329,7 @@ export function buildOcean(heightTex) {
       uFogColor: uniforms.uFogColor,
       uFogDensity: uniforms.uFogDensity,
       uNightF: uniforms.uNightF,
+      uStorm: uniforms.uStorm,
     },
   });
 

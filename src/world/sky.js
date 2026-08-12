@@ -168,7 +168,7 @@ export function buildSky(scene, renderer, camera) {
       const w = rand(180, 420);
       s.scale.set(w, w * rand(0.30, 0.42), 1);
       scene.add(s);
-      clouds.push({ sprite: s, speed: rand(0.9, 2.2) });
+      clouds.push({ sprite: s, speed: rand(0.9, 2.2), baseOpacity: mat.opacity });
     }
   }
 
@@ -298,7 +298,7 @@ export function buildSky(scene, renderer, camera) {
   // ---- the cycle ----
   let tod = START_TOD;
   let waterMat = null;
-  let lastBakeT = -100, lastBakeElev = 999;
+  let lastBakeT = -100, lastBakeElev = 999, lastBakeStorm = 0;
   const _sunDir = new THREE.Vector3(), _moonDir = new THREE.Vector3();
   const _c = new THREE.Color();
 
@@ -321,11 +321,15 @@ export function buildSky(scene, renderer, camera) {
     const { az, sunElev, moonElev, moonAz } = angles(tod);
     const elevDeg = THREE.MathUtils.radToDeg(sunElev);
     const moonDeg = THREE.MathUtils.radToDeg(moonElev);
+    const storm = uniforms.uStorm.value;
     dirFrom(az, sunElev, _sunDir);
     dirFrom(moonAz, moonElev, _moonDir);
 
-    // the sky dome always tracks the true sun (goes dark below the horizon)
+    // the sky dome always tracks the true sun (goes dark below the horizon);
+    // squalls load the air with haze until the blue drowns in it
     u.sunPosition.value.copy(_sunDir);
+    u.turbidity.value = 3.4 + 17 * storm;
+    u.mieCoefficient.value = 0.009 + 0.028 * storm;
 
     // light role
     const sunI = 3.3 * sstep(-1, 12, elevDeg);
@@ -333,7 +337,7 @@ export function buildSky(scene, renderer, camera) {
     const moonRole = moonI > sunI;
     const roleDir = moonRole ? _moonDir : _sunDir;
     sun.position.copy(roleDir).multiplyScalar(180);
-    sun.intensity = Math.max(sunI, moonI, 0.02);
+    sun.intensity = Math.max(sunI, moonI, 0.02) * (1 - 0.78 * storm);
     if (moonRole) sun.color.setRGB(0.55, 0.65, 0.95);
     else PAL.light.get(elevDeg, sun.color);
 
@@ -342,12 +346,20 @@ export function buildSky(scene, renderer, camera) {
     PAL.sunShared.get(elevDeg, uniforms.uSunColor.value);
     uniforms.uSunI.value = sstep(-1, 10, elevDeg) + 0.3 * sstep(3, 16, moonDeg);
 
-    // fog + hemisphere
+    // fog + hemisphere (squalls gray the air out and thicken it)
     PAL.fog.get(elevDeg, scene.fog.color);
+    if (storm > 0.001) {
+      const lum = scene.fog.color.r * 0.3 + scene.fog.color.g * 0.5 + scene.fog.color.b * 0.2;
+      _c.setRGB(lum * 0.62, lum * 0.66, lum * 0.7);
+      scene.fog.color.lerp(_c, storm * 0.8);
+    }
+    scene.fog.density = FOG_DENSITY * (1 + 2.6 * storm);
+    uniforms.uFogDensity.value = scene.fog.density;
     uniforms.uFogColor.value.copy(scene.fog.color);
     PAL.hemiSky.get(elevDeg, hemi.color);
     PAL.hemiGround.get(elevDeg, hemi.groundColor);
-    hemi.intensity = 0.16 + 0.42 * sstep(-3, 15, elevDeg);
+    hemi.intensity = (0.16 + 0.42 * sstep(-3, 15, elevDeg)) * (1 - 0.4 * storm);
+    scene.environmentIntensity = 0.55 * (1 - 0.5 * storm);
 
     // ocean palette
     if (waterMat) {
@@ -359,10 +371,14 @@ export function buildSky(scene, renderer, camera) {
       PAL.waterDeep.get(elevDeg, wu.uDeepColor.value);
     }
 
-    // clouds, stars, moon
+    // clouds, stars, moon (the squall smothers the sky)
     PAL.cloud.get(elevDeg, _c);
-    for (const cl of clouds) cl.sprite.material.color.copy(_c);
-    starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg));
+    _c.multiplyScalar(1 - 0.62 * storm);
+    for (const cl of clouds) {
+      cl.sprite.material.color.copy(_c);
+      cl.sprite.material.opacity = cl.baseOpacity * (1 + 0.5 * storm);
+    }
+    starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg)) * (1 - 0.9 * storm);
     uniforms.uNightF.value = 1 - sstep(-10, -2, elevDeg);
 
     // tide rides the same clock
@@ -372,11 +388,13 @@ export function buildSky(scene, renderer, camera) {
     moon.position.copy(_moonDir).multiplyScalar(3100);
     moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
 
-    // throttled ambient rebake
-    if (t - lastBakeT > 1.5 && Math.abs(elevDeg - lastBakeElev) > 0.8) {
+    // throttled ambient rebake (storm shifts count as sky changes too)
+    if (t - lastBakeT > 1.5 &&
+        (Math.abs(elevDeg - lastBakeElev) > 0.8 || Math.abs(storm - lastBakeStorm) > 0.2)) {
       bakeEnv(_sunDir);
       lastBakeT = t;
       lastBakeElev = elevDeg;
+      lastBakeStorm = storm;
     }
   }
 

@@ -140,6 +140,7 @@ export function buildTerrain() {
     shader.uniforms.uNightF = uniforms.uNightF;
     shader.uniforms.uTide = uniforms.uTide;
     shader.uniforms.uTideAng = uniforms.uTideAng;
+    shader.uniforms.uRainWet = uniforms.uRainWet;
     shader.uniforms.uCaustic = { value: caustics };
     shader.uniforms.uBreakup = { value: breakup };
     Object.assign(shader.uniforms, swashUniforms);
@@ -158,6 +159,7 @@ export function buildTerrain() {
       uniform float uNightF;
       uniform float uTide;
       uniform float uTideAng;
+      uniform float uRainWet;
       uniform sampler2D uCaustic;
       uniform sampler2D uBreakup;
       uniform vec4 uZone1;
@@ -197,6 +199,8 @@ export function buildTerrain() {
           float sinceTide = sw_tideSince(hAbs, uAmbient.x * 0.7, uTideAng);
           wet = max(wet, pow(exp(-sinceTide / (uDrySecs * 3.2)), 0.72));
           wet = max(wet, 1.0 - smoothstep(0.0, 0.15, hEff)); // saturated fringe
+          // rain soaks the whole island; uRainWet decays slowly after a squall
+          wet = max(wet, uRainWet * (0.72 + 0.28 * macro));
           wet = clamp(wet, 0.0, 1.0);
 
           // wet sand: much darker, slightly warm, water-saturated
@@ -256,7 +260,7 @@ export function buildTerrain() {
       'float vWetness = 0.0;\nfloat vBio = 0.0;\nvoid main() {'
     );
   };
-  mat.customProgramCacheKey = () => 'cove-sand-v3';
+  mat.customProgramCacheKey = () => 'cove-sand-v4';
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
