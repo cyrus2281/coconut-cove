@@ -202,6 +202,16 @@ renderer.setAnimationLoop(() => {
   audio.update(t);
 
   renderer.render(scene, camera);
+
+  // one-shot frame grab for tooling/screenshots (__beach.snap())
+  if (window.__snapReq) {
+    window.__snapReq = false;
+    const c2 = document.createElement('canvas');
+    c2.width = renderer.domElement.width;
+    c2.height = renderer.domElement.height;
+    c2.getContext('2d').drawImage(renderer.domElement, 0, 0);
+    window.__cap = c2.toDataURL('image/jpeg', 0.86);
+  }
 });
 
 // ---- debug hooks (used for automated screenshots; harmless in production) ----
@@ -237,6 +247,7 @@ window.__beach = {
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
   rain: (on = true) => weather.rain(on),
+  snap() { window.__snapReq = true; }, // grab the next rendered frame to window.__cap
   // lay a test track of prints marching down the beach into the surge zone
   stampLine(az = 1.55) {
     const ox = Math.cos(az), oz = Math.sin(az);
