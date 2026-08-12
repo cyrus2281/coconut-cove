@@ -1,0 +1,481 @@
+// Runtime-painted procedural textures. No files are downloaded — every map
+// (sand grain, bark, leaflets, husk, shells, foam, water normals, caustics,
+// clouds) is generated on <canvas> at startup, seeded and tileable.
+
+import * as THREE from 'three';
+import { mulberry32 } from './rng.js';
+
+function makeCanvas(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return [c, c.getContext('2d', { willReadFrequently: true })];
+}
+
+// Tileable value-noise field, arbitrary octaves. Returns Float32Array in [0,1].
+function noiseField(size, seed, octaves = 4, baseCells = 4, gain = 0.55) {
+  const rand = mulberry32(seed);
+  const out = new Float32Array(size * size);
+  let amp = 1, norm = 0, cells = baseCells;
+  for (let o = 0; o < octaves; o++) {
+    const grid = new Float32Array(cells * cells);
+    for (let i = 0; i < grid.length; i++) grid[i] = rand();
+    const cw = size / cells;
+    for (let y = 0; y < size; y++) {
+      const gy = y / cw;
+      const y0 = Math.floor(gy) % cells;
+      const y1 = (y0 + 1) % cells;
+      let ty = gy - Math.floor(gy);
+      ty = ty * ty * (3 - 2 * ty);
+      for (let x = 0; x < size; x++) {
+        const gx = x / cw;
+        const x0 = Math.floor(gx) % cells;
+        const x1 = (x0 + 1) % cells;
+        let tx = gx - Math.floor(gx);
+        tx = tx * tx * (3 - 2 * tx);
+        const a = grid[y0 * cells + x0], b = grid[y0 * cells + x1];
+        const c = grid[y1 * cells + x0], d = grid[y1 * cells + x1];
+        const v = (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+        out[y * size + x] += v * amp;
+      }
+    }
+    norm += amp; amp *= gain; cells *= 2;
+  }
+  for (let i = 0; i < out.length; i++) out[i] /= norm;
+  return out;
+}
+
+function fieldToNormalCanvas(field, w, h = w, strength = 2.0) {
+  const [c, ctx] = makeCanvas(w, h);
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const xm = (x - 1 + w) % w, xp = (x + 1) % w;
+      const ym = (y - 1 + h) % h, yp = (y + 1) % h;
+      const dx = (field[y * w + xp] - field[y * w + xm]) * strength;
+      const dy = (field[yp * w + x] - field[ym * w + x]) * strength;
+      const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+      const i = (y * w + x) * 4;
+      d[i] = (-dx * inv * 0.5 + 0.5) * 255;
+      d[i + 1] = (-dy * inv * 0.5 + 0.5) * 255;
+      d[i + 2] = inv * 255;
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
+function tex(canvas, { srgb = true, repeat = true } = {}) {
+  const t = new THREE.CanvasTexture(canvas);
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.needsUpdate = true;
+  return t;
+}
+
+const registry = [];
+function track(t) { registry.push(t); return t; }
+export function applyAnisotropy(renderer) {
+  const max = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  for (const t of registry) { t.anisotropy = max; t.needsUpdate = true; }
+}
+
+// ---------------------------------------------------------------- sand
+export function sandTextures() {
+  const S = 512;
+  const rand = mulberry32(41);
+  const macro = noiseField(S, 42, 5, 4);
+  const [c, ctx] = makeCanvas(S, S);
+
+  // base with large-scale tonal drift
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < S * S; i++) {
+    const m = macro[i];
+    img.data[i * 4] = 214 + m * 26 - 13;
+    img.data[i * 4 + 1] = 196 + m * 24 - 12;
+    img.data[i * 4 + 2] = 158 + m * 22 - 11;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // individual grains: tens of thousands of tinted specks
+  const palettes = [
+    ['#b3925f', 0.38, 11000], // amber quartz
+    ['#8a6f4a', 0.32, 5200],  // darker mineral
+    ['#f7ecd4', 0.4, 6800],   // bleached shell/coral
+    ['#c9c2b4', 0.3, 3400],   // gray quartz
+    ['#4a3c2c', 0.4, 950],    // basalt flecks
+    ['#e8b9a0', 0.32, 900],   // coral pink
+    ['#ffffff', 0.5, 700],    // bright glints
+  ];
+  for (const [col, alpha, count] of palettes) {
+    ctx.fillStyle = col;
+    for (let i = 0; i < count; i++) {
+      ctx.globalAlpha = alpha * (0.5 + rand() * 0.5);
+      const s = rand() < 0.85 ? 1 : 2;
+      ctx.fillRect(rand() * S, rand() * S, s, s);
+    }
+  }
+  // a few larger shell-hash fragments
+  ctx.globalAlpha = 0.55;
+  for (let i = 0; i < 260; i++) {
+    ctx.fillStyle = rand() < 0.5 ? '#f4ead2' : '#d9c39a';
+    ctx.beginPath();
+    ctx.ellipse(rand() * S, rand() * S, 1 + rand() * 1.6, 0.7 + rand(), rand() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // height field for the normal map: micro noise + grain bumps + faint wind ripples
+  const h = noiseField(S, 43, 5, 8, 0.6);
+  const ripple = noiseField(S, 44, 3, 4);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x;
+      const warp = ripple[i] * 78;
+      const band = Math.sin(((y + warp) / S) * Math.PI * 2 * 11) * 0.18 + 0.5;
+      h[i] = h[i] * 0.76 + band * 0.24;
+    }
+  }
+  const grand = mulberry32(45);
+  for (let i = 0; i < 26000; i++) {
+    const x = Math.floor(grand() * S), y = Math.floor(grand() * S);
+    h[y * S + x] = Math.min(1, h[y * S + x] + 0.35 * grand());
+  }
+
+  return {
+    map: track(tex(c)),
+    normalMap: track(tex(fieldToNormalCanvas(h, S, S, 2.6), { srgb: false })),
+  };
+}
+
+// ---------------------------------------------------------------- footprints
+// Bare-foot decal: R-channel mask + a normal map with a pressed-in sole and a
+// slightly raised rim of displaced sand. Toes are painted toward canvas
+// bottom, which faces the walking direction after the decal quad's rotateX.
+export function footprintTextures() {
+  const W = 128, H = 192;
+
+  const paintFoot = (ctx, scale) => {
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-W / 2, -H / 2);
+    ctx.fillStyle = '#fff';
+    const ell = (x, y, rx, ry, rot = 0) => {
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    ell(64, 46, 19, 24);          // heel
+    ell(59, 92, 15, 27, 0.08);    // arch (narrow, shifted inward)
+    ell(66, 133, 26, 23, -0.06);  // ball
+    // toes: big toe inboard (right foot; the left is a mirrored instance)
+    ell(41, 165, 9, 10);
+    ell(58, 171, 6.6, 7);
+    ell(73, 172, 5.6, 6);
+    ell(86, 170, 5, 5.4);
+    ell(98, 166, 4.4, 4.8);
+    ctx.restore();
+  };
+
+  const renderField = (scale, blur) => {
+    const [c, ctx] = makeCanvas(W, H);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    ctx.filter = `blur(${blur}px)`;
+    paintFoot(ctx, scale);
+    ctx.filter = 'none';
+    const data = ctx.getImageData(0, 0, W, H).data;
+    const f = new Float32Array(W * H);
+    for (let i = 0; i < f.length; i++) f[i] = data[i * 4] / 255;
+    return { canvas: c, field: f };
+  };
+
+  const inner = renderField(1.0, 2.5);
+  const outer = renderField(1.24, 5);
+
+  // height: pressed-down sole + pushed-up rim of sand around it
+  const height = new Float32Array(W * H);
+  for (let i = 0; i < height.length; i++) {
+    const rim = Math.max(outer.field[i] - inner.field[i], 0);
+    height[i] = 0.5 - inner.field[i] * 0.42 + rim * 0.3;
+  }
+
+  // mask: sole plus a faint rim presence so the bump reads at grazing light
+  const [mc, mctx] = makeCanvas(W, H);
+  const img = mctx.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const m = Math.min(1, inner.field[i] + Math.max(outer.field[i] - inner.field[i], 0) * 0.45);
+    img.data[i * 4] = inner.field[i] * 255;
+    img.data[i * 4 + 1] = m * 255;
+    img.data[i * 4 + 2] = 0;
+    img.data[i * 4 + 3] = 255;
+  }
+  mctx.putImageData(img, 0, 0);
+
+  const clampTex = (canvas) => {
+    const t = tex(canvas, { srgb: false, repeat: false });
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    return t;
+  };
+  return {
+    mask: clampTex(mc),
+    normal: clampTex(fieldToNormalCanvas(height, W, H, 3.2)),
+  };
+}
+
+// ---------------------------------------------------------------- palm bark
+export function barkTexture(desaturated = false) {
+  const W = 256, H = 512;
+  const rand = mulberry32(desaturated ? 77 : 7);
+  const [c, ctx] = makeCanvas(W, H);
+  ctx.fillStyle = desaturated ? '#9b948a' : '#9d8b72';
+  ctx.fillRect(0, 0, W, H);
+
+  // vertical fiber streaks
+  for (let i = 0; i < 520; i++) {
+    const x = rand() * W;
+    const grey = 110 + rand() * 90;
+    ctx.strokeStyle = desaturated
+      ? `rgba(${grey},${grey},${grey - 6},${0.05 + rand() * 0.07})`
+      : `rgba(${grey},${grey * 0.88},${grey * 0.66},${0.05 + rand() * 0.08})`;
+    ctx.lineWidth = 0.6 + rand() * 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.bezierCurveTo(x + rand() * 8 - 4, H * 0.33, x + rand() * 8 - 4, H * 0.66, x + rand() * 6 - 3, H);
+    ctx.stroke();
+  }
+  // leaf-scar rings (coconut trunks keep ridged ring scars)
+  let y = 6 + rand() * 10;
+  while (y < H) {
+    const hgt = 3 + rand() * 6;
+    const dark = rand() < 0.75;
+    ctx.fillStyle = dark
+      ? (desaturated ? 'rgba(70,66,60,0.42)' : 'rgba(84,70,52,0.45)')
+      : (desaturated ? 'rgba(210,205,196,0.30)' : 'rgba(214,198,170,0.32)');
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 8) {
+      const yy = y + Math.sin((x / W) * Math.PI * 2 + rand() * 6) * 1.5 + rand() * 1.2;
+      x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+    }
+    for (let x = W; x >= 0; x -= 8) ctx.lineTo(x, y + hgt + rand() * 1.5);
+    ctx.fill();
+    y += 16 + rand() * 14;
+  }
+  // mottle
+  for (let i = 0; i < 900; i++) {
+    const g = 60 + rand() * 140;
+    ctx.fillStyle = `rgba(${g},${g * 0.9},${g * 0.72},${0.05 + rand() * 0.05})`;
+    ctx.fillRect(rand() * W, rand() * H, 1 + rand() * 3, 1 + rand() * 2);
+  }
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- palm leaflet
+export function leafletTexture() {
+  const W = 128, H = 256;
+  const rand = mulberry32(9);
+  const [c, ctx] = makeCanvas(W, H);
+
+  // blade gradient: darker at base, brighter toward tip
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#3f6120');
+  g.addColorStop(0.55, '#4d7526');
+  g.addColorStop(1, '#688c33');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // per-pixel chlorophyll noise
+  const n = noiseField(W, 10, 4, 4);
+  const img = ctx.getImageData(0, 0, W, H);
+  for (let yy = 0; yy < H; yy++) {
+    for (let xx = 0; xx < W; xx++) {
+      const i = (yy * W + xx) * 4;
+      const v = (n[(yy % W) * W + xx] - 0.5) * 34;
+      img.data[i] += v * 0.7;
+      img.data[i + 1] += v;
+      img.data[i + 2] += v * 0.4;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // lengthwise veins
+  for (let i = 0; i < 46; i++) {
+    const x = rand() * W;
+    ctx.strokeStyle = `rgba(${30 + rand() * 40},${70 + rand() * 50},${20 + rand() * 20},${0.10 + rand() * 0.10})`;
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + rand() * 6 - 3, H);
+    ctx.stroke();
+  }
+  // central rib: shadow + highlight (leaflet UV puts the fold at u=0.5)
+  ctx.fillStyle = 'rgba(28,46,12,0.85)';
+  ctx.fillRect(W / 2 - 2.5, 0, 5, H);
+  ctx.fillStyle = 'rgba(196,214,120,0.75)';
+  ctx.fillRect(W / 2 - 0.8, 0, 1.6, H);
+
+  // dried tip
+  const tipG = ctx.createLinearGradient(0, H * 0.82, 0, H);
+  tipG.addColorStop(0, 'rgba(140,120,58,0)');
+  tipG.addColorStop(1, 'rgba(150,118,52,0.85)');
+  ctx.fillStyle = tipG;
+  ctx.fillRect(0, H * 0.8, W, H * 0.2);
+
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- coconut husk
+export function huskTexture() {
+  const S = 256;
+  const rand = mulberry32(13);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.fillStyle = '#6f5233';
+  ctx.fillRect(0, 0, S, S);
+
+  const blotch = noiseField(S, 14, 4, 4);
+  const img = ctx.getImageData(0, 0, S, S);
+  for (let i = 0; i < S * S; i++) {
+    const v = (blotch[i] - 0.5) * 46;
+    img.data[i * 4] += v;
+    img.data[i * 4 + 1] += v * 0.85;
+    img.data[i * 4 + 2] += v * 0.6;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // coir fibers
+  for (let i = 0; i < 1400; i++) {
+    const x = rand() * S, y = rand() * S;
+    const len = 6 + rand() * 22;
+    const a = -0.4 + rand() * 0.8; // mostly "vertical" fibers
+    const bright = rand() < 0.5;
+    ctx.strokeStyle = bright
+      ? `rgba(168,130,86,${0.10 + rand() * 0.12})`
+      : `rgba(58,40,24,${0.12 + rand() * 0.14})`;
+    ctx.lineWidth = 0.6 + rand() * 0.8;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(x + Math.sin(a) * len * 0.5 + rand() * 3 - 1.5, y + len * 0.5, x + Math.sin(a) * len, y + len);
+    ctx.stroke();
+  }
+  // germination eyes near the top pole (v ~ 0.06)
+  ctx.fillStyle = 'rgba(38,26,15,0.9)';
+  for (const u of [0.3, 0.5, 0.7]) {
+    ctx.beginPath();
+    ctx.ellipse(u * S, 0.07 * S, 7, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- sea shell
+export function shellTexture() {
+  const S = 256;
+  const rand = mulberry32(21);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.fillStyle = '#efe4cf';
+  ctx.fillRect(0, 0, S, S);
+
+  // growth bands sweeping across V
+  for (let i = 0; i < 26; i++) {
+    const y = (i / 26) * S + rand() * 6;
+    ctx.fillStyle = `rgba(${150 + rand() * 60},${105 + rand() * 45},${62 + rand() * 30},${0.10 + rand() * 0.16})`;
+    ctx.fillRect(0, y, S, 2 + rand() * 7);
+  }
+  // mottled blotches
+  for (let i = 0; i < 150; i++) {
+    ctx.fillStyle = `rgba(${140 + rand() * 50},${90 + rand() * 40},${55 + rand() * 25},${0.14 + rand() * 0.2})`;
+    ctx.beginPath();
+    ctx.ellipse(rand() * S, rand() * S, 2 + rand() * 9, 1.5 + rand() * 5, rand() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // fine radial ridge lines along U
+  for (let x = 0; x < S; x += 3) {
+    ctx.strokeStyle = `rgba(120,95,70,${0.05 + rand() * 0.06})`;
+    ctx.beginPath();
+    ctx.moveTo(x + rand() * 2, 0);
+    ctx.lineTo(x + rand() * 2, S);
+    ctx.stroke();
+  }
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- foam mask
+export function foamTexture() {
+  const S = 256;
+  const n = noiseField(S, 31, 5, 6, 0.62);
+  const n2 = noiseField(S, 32, 4, 12, 0.5);
+  const [c, ctx] = makeCanvas(S, S);
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < S * S; i++) {
+    const v = n[i] * 0.68 + n2[i] * 0.32;
+    const holes = Math.max(0, Math.min(1, (v - 0.42) * 3.4));
+    const g = Math.pow(holes, 1.25) * 255;
+    img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = g;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return track(tex(c, { srgb: false }));
+}
+
+// ---------------------------------------------------------------- water detail normals
+export function waterNormalTexture() {
+  const S = 256;
+  const f = noiseField(S, 51, 5, 5, 0.58);
+  return track(tex(fieldToNormalCanvas(f, S, S, 3.2), { srgb: false }));
+}
+
+// ---------------------------------------------------------------- caustics (tileable voronoi web)
+export function causticTexture() {
+  const S = 256, N = 26;
+  const rand = mulberry32(61);
+  const pts = [];
+  for (let i = 0; i < N; i++) pts.push([rand() * S, rand() * S]);
+  const [c, ctx] = makeCanvas(S, S);
+  const img = ctx.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      let d1 = 1e9, d2 = 1e9;
+      for (const [px, py] of pts) {
+        // torus distance for tileability
+        let dx = Math.abs(x - px); if (dx > S / 2) dx = S - dx;
+        let dy = Math.abs(y - py); if (dy > S / 2) dy = S - dy;
+        const d = dx * dx + dy * dy;
+        if (d < d1) { d2 = d1; d1 = d; }
+        else if (d < d2) d2 = d;
+      }
+      const edge = Math.sqrt(d2) - Math.sqrt(d1);
+      const v = Math.pow(Math.max(0, 1 - edge / 9), 2.6);
+      const i = (y * S + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v * 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return track(tex(c, { srgb: false }));
+}
+
+// ---------------------------------------------------------------- cloud puff sprite
+export function cloudTexture(seed = 71) {
+  const S = 256;
+  const rand = mulberry32(seed);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.clearRect(0, 0, S, S);
+  const blobs = 12 + Math.floor(rand() * 8);
+  for (let i = 0; i < blobs; i++) {
+    const cx = S * 0.5 + (rand() - 0.5) * S * 0.55;
+    const cy = S * 0.52 + (rand() - 0.5) * S * 0.26;
+    const r = S * (0.10 + rand() * 0.15);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    const warm = 244 + rand() * 11;
+    g.addColorStop(0, `rgba(255,${warm},${warm - 8},${0.5 + rand() * 0.3})`);
+    g.addColorStop(1, 'rgba(255,250,244,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  }
+  const t = tex(c, { repeat: false });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return track(t);
+}
