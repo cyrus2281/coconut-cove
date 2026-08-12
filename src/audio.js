@@ -226,6 +226,28 @@ export class OceanAudio {
     }
   }
 
+  // the hollow knock of a booted coconut
+  thock(x, z) {
+    if (!this.ctx || this.muted) return;
+    const { pan, dist } = this._spatial(x, z);
+    if (dist > 30) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const amp = 0.5 / (1 + dist * 0.2);
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(210 + Math.random() * 40, now);
+    o.frequency.exponentialRampToValueAtTime(70, now + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(amp, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+    const p = ctx.createStereoPanner();
+    p.pan.value = pan;
+    o.connect(g).connect(p).connect(this.master);
+    o.start(now);
+    o.stop(now + 0.13);
+  }
+
   setRain(k) {
     if (!this.ctx || !this.rainHi) return;
     const now = this.ctx.currentTime;

@@ -17,6 +17,7 @@ import { buildFig } from './world/fig.js';
 import { buildCampfire } from './world/campfire.js';
 import { buildFireflies } from './world/fireflies.js';
 import { buildButterflies } from './world/butterflies.js';
+import { buildCoconuts } from './world/coconuts.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
@@ -92,6 +93,8 @@ function buildWorldNow() {
   scene.add(fireflies.group);
   const butterflies = buildButterflies();
   scene.add(butterflies.group);
+  const coconuts = buildCoconuts(player, palms.trees, audio);
+  scene.add(coconuts.group);
   const crabs = buildCrabs(player, footprints);
   scene.add(crabs.group);
   const fish = buildFish(player);
@@ -100,7 +103,7 @@ function buildWorldNow() {
   applyAnisotropy(renderer);
   return {
     terrain, heightTex, ocean, pond, palms, fig, scatterG,
-    campfire, fireflies, butterflies, crabs, fish,
+    campfire, fireflies, butterflies, coconuts, crabs, fish,
   };
 }
 
@@ -141,7 +144,7 @@ function rebuildWorld() {
     for (const obj of [
       world.terrain, world.ocean.group, world.pond.group, world.palms.group,
       world.fig.group, world.scatterG, world.campfire.group,
-      world.fireflies.group, world.butterflies.group,
+      world.fireflies.group, world.butterflies.group, world.coconuts.group,
       world.crabs.group, world.fish.group,
     ]) {
       scene.remove(obj);
@@ -261,6 +264,7 @@ renderer.setAnimationLoop(() => {
   world.campfire.update(t, dt);
   world.fireflies.update(t, dt);
   world.butterflies.update(t, dt);
+  world.coconuts.update(t, dt);
   boat.update(t);
   world.fish.update(t, dt);
   turtle.update(t, dt);
@@ -296,6 +300,7 @@ window.__beach = {
   get campfire() { return world.campfire; },
   get fireflies() { return world.fireflies; },
   get butterflies() { return world.butterflies; },
+  get coconuts() { return world.coconuts; },
   seed: () => getSeed(),
   reseed(s) {
     setSeed(s === undefined ? randomSeed() : s);
