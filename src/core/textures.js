@@ -597,30 +597,25 @@ export function causticTexture() {
 // ---------------------------------------------------------------- butterfly wing
 // One wing pair (fore + hind) of one side, drawn body→tip along U. The
 // membrane is near-white so per-instance tints stay saturated; the alpha
-// channel carves the scalloped silhouette out of the trapezoid quad. The
-// far-left column (u < 0.045) is a dark strip the body quads sample.
+// channel carves the scalloped silhouette out of the trapezoid quad.
+// There is no body geometry and no painted body strip (a full-height bar
+// at the quad root reads as a harsh stick when the wings fold) — the
+// silhouette runs to the quad's inner edge and its dark basal shading is
+// all the "body" a butterfly this size needs.
 export function butterflyWingTexture() {
   const S = 256;
   const rand = mulberry32(83);
   const [c, ctx] = makeCanvas(S, S);
   ctx.clearRect(0, 0, S, S);
 
-  // body strip
-  const bg = ctx.createLinearGradient(0, 0, 0, S);
-  bg.addColorStop(0, '#2c2018');
-  bg.addColorStop(0.5, '#4a3624');
-  bg.addColorStop(1, '#241a12');
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, S * 0.045, S);
-
   // wing silhouette: forewing sweep, a notch, then the hindwing lobe
   const P = [
-    [0.05, 0.30], [0.45, 0.13], [0.82, 0.05], [0.965, 0.10], // leading edge
-    [0.90, 0.30], [0.86, 0.44],                              // forewing tip edge
-    [0.66, 0.50], [0.58, 0.53],                              // notch
-    [0.74, 0.66], [0.70, 0.82],                              // hindwing bulge
-    [0.52, 0.93], [0.34, 0.97], [0.20, 0.90],                // scalloped trail
-    [0.05, 0.78],
+    [0.008, 0.28], [0.45, 0.13], [0.82, 0.05], [0.965, 0.10], // leading edge
+    [0.90, 0.30], [0.86, 0.44],                               // forewing tip edge
+    [0.66, 0.50], [0.58, 0.53],                               // notch
+    [0.74, 0.66], [0.70, 0.82],                               // hindwing bulge
+    [0.52, 0.93], [0.34, 0.97], [0.20, 0.90],                 // scalloped trail
+    [0.008, 0.80],
   ];
   const path = new Path2D();
   path.moveTo(P[0][0] * S, P[0][1] * S);
@@ -644,8 +639,8 @@ export function butterflyWingTexture() {
   ctx.save();
   ctx.clip(path);
 
-  // dark basal region where the wing meets the body
-  const base = ctx.createRadialGradient(S * 0.045, S * 0.5, 0, S * 0.045, S * 0.5, S * 0.34);
+  // dark basal region where the wing roots meet in the middle
+  const base = ctx.createRadialGradient(S * 0.008, S * 0.5, 0, S * 0.008, S * 0.5, S * 0.34);
   base.addColorStop(0, 'rgba(46,32,22,0.95)');
   base.addColorStop(0.45, 'rgba(46,32,22,0.4)');
   base.addColorStop(1, 'rgba(46,32,22,0)');

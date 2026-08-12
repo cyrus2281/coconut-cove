@@ -1,5 +1,6 @@
 // Butterflies for the daytime interior: one instanced mesh of two-quad
-// wing pairs plus a little crossed-quad body. The flap lives in the vertex
+// wing pairs (no body — the painted dark wing roots meet in the middle
+// and read as one from any real distance). The flap lives in the vertex
 // shader (per-instance phase, rate and rest-fold); the wander lives on the
 // CPU — each one loops around a home tuft, darting to a new anchor now and
 // then, and sometimes dropping onto the grass to perch with folded wings
@@ -21,8 +22,8 @@ export function buildButterflies(player) {
   group.name = 'butterflies';
   const rand = mulberry32(subSeed('butterflies'));
 
-  // ---- wing-pair geometry: two trapezoid quads meeting at the body ----
-  const pos = [], sid = [], uv = [], idx = [];
+  // ---- wing-pair geometry: two trapezoid quads meeting in the middle ----
+  const pos = [], uv = [], idx = [];
   const wing = (side) => {
     const base = pos.length / 3;
     // body-edge front, tip front, tip back, body-edge back
@@ -32,32 +33,14 @@ export function buildButterflies(player) {
       [SPAN * side, 0.004, 0.028],
       [0.004 * side, 0, 0.034],
     ];
-    for (const p of pts) { pos.push(...p); sid.push(side); }
+    for (const p of pts) pos.push(...p);
     uv.push(0, 0, 1, 0, 1, 1, 0, 1);
     idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   };
   wing(1); wing(-1);
 
-  // body: two crossed slivers along the wing hinge, sampling the dark
-  // strip at the texture's left edge. aSide 0 keeps them out of the flap.
-  const bodyQuad = (corners) => {
-    const base = pos.length / 3;
-    for (const p of corners) { pos.push(...p); sid.push(0); }
-    uv.push(0.012, 0.1, 0.012, 0.9, 0.038, 0.9, 0.038, 0.1);
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-  };
-  bodyQuad([ // vertical fin: head bump to tapered abdomen
-    [0, 0.009, -0.052], [0, 0.009, 0.046],
-    [0, -0.015, 0.046], [0, -0.015, -0.052],
-  ]);
-  bodyQuad([ // horizontal sliver for the top-down view
-    [-0.007, -0.003, -0.052], [0.007, -0.003, -0.052],
-    [0.007, -0.003, 0.046], [-0.007, -0.003, 0.046],
-  ]);
-
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('aSide', new THREE.Float32BufferAttribute(sid, 1));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   geo.setIndex(idx);
   geo.computeVertexNormals();
@@ -87,7 +70,6 @@ export function buildButterflies(player) {
     shader.vertexShader = `
       uniform float uTime;
       uniform float uFlapAmp;
-      attribute float aSide;
       attribute float aPhase;
       attribute float aRate;
       attribute float aRest;
@@ -105,7 +87,7 @@ export function buildButterflies(player) {
       }`
     );
   };
-  mat.customProgramCacheKey = () => 'butterfly-v2';
+  mat.customProgramCacheKey = () => 'butterfly-v3';
 
   const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
   mesh.frustumCulled = false;
