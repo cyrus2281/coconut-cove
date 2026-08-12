@@ -13,6 +13,12 @@ import { MeshData, windify } from './palms.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// where the current island's fig stands (scatter uses it to keep the cairn
+// and wreck out of the tree's shade). Set by buildFig, which main.js always
+// runs before buildScatter.
+let FIG_BASE = null;
+export function figBase() { return FIG_BASE ? FIG_BASE.clone() : null; }
+
 // loft a tapering tube along points with a star-shaped (buttressed) base
 function loftTrunk(data, pts, radii, buttress, seedRand) {
   const AROUND = 30; // a 5-lobed star needs the sampling
@@ -280,5 +286,6 @@ export function buildFig() {
     group.add(mesh);
   }
 
+  FIG_BASE = base.clone();
   return { group, base: base.clone(), crown, canopyR };
 }

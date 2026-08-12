@@ -4,11 +4,13 @@
 // it hugs the terrain, and heavier concentrations follow the high-tide line.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, Simplex2 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { islandHeight, islandNormal, shoreRadius, cayCenter, lagoonInfo, lagoonFreeboard } from './island.js';
 import { shellTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
+import { figBase } from './fig.js';
 
 let scatterNoise = null; // recreated per island inside buildScatter
 
@@ -388,6 +390,181 @@ function placeGrass(group) {
   group.add(mesh);
 }
 
+// An old hull swallowed by the dunes: a curved keel line with pairs of
+// broken ribs arcing out of the sand, and a leaning stem post. Storm-cast,
+// long dead — the island's one hint of a "before".
+function placeWreck(group) {
+  const rand = mulberry32(subSeed('wreck'));
+  const L = lagoonInfo();
+  const fb = figBase();
+
+  // a dune saddle: inland, dry, clear of the pond and the big tree
+  let site = null;
+  for (let tries = 0; tries < 80; tries++) {
+    const az = rand() * Math.PI * 2;
+    const d = 9 + rand() * 8;
+    const r = shoreRadius(az) - d;
+    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    const h = islandHeight(x, z);
+    if (h < 2.4 || h > 4.6) continue;
+    if (lagoonFreeboard(x, z) < 1.0) continue;
+    if (fb && Math.hypot(x - fb.x, z - fb.z) < 12) continue;
+    site = { x, z, h };
+    break;
+  }
+  if (!site) return;
+
+  const keelYaw = rand() * Math.PI * 2;
+  const LEN = 10 + rand() * 2.5;
+  const parts = [];
+
+  // keel: a long half-buried beam, bowing up toward the stem
+  const keel = new THREE.CylinderGeometry(0.12, 0.15, LEN, 7, 10);
+  keel.rotateZ(Math.PI / 2);
+  {
+    const p = keel.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      // clamp: float error puts cap-ring verts a hair past ±LEN/2, and a
+      // negative base under a fractional pow is NaN
+      const t = Math.min(Math.max(p.getX(i) / LEN + 0.5, 0), 1);
+      p.setY(i, p.getY(i) + Math.pow(t, 2.2) * 1.1 - 0.1);
+    }
+    keel.computeVertexNormals();
+  }
+  parts.push(keel);
+
+  // rib pairs: partial torus arcs standing on the keel, most snapped short.
+  // They have to clear the dune noise around the site, so they run tall.
+  const RIBS = 8 + Math.floor(rand() * 2);
+  for (let i = 0; i < RIBS; i++) {
+    const t = i / (RIBS - 1);
+    const along = (t - 0.42) * LEN * 0.78;
+    const beam = 1.7 * Math.sin(Math.PI * (0.25 + t * 0.62)) + 0.5; // hull width curve
+    for (const side of [-1, 1]) {
+      const broken = rand();
+      const arc = (0.6 + broken * 0.7) * Math.PI * 0.46;
+      const g = new THREE.TorusGeometry(beam, 0.055 + rand() * 0.025, 6, 16, arc);
+      // stand the arc upright, opening upward, hugging the hull line
+      g.rotateZ(side > 0 ? Math.PI - arc : 0);
+      g.rotateY(Math.PI / 2);
+      g.translate(along, 0.05, 0);
+      parts.push(g);
+    }
+  }
+
+  // stem post leaning at the bow
+  const stem = new THREE.CylinderGeometry(0.06, 0.12, 3.4, 7);
+  stem.translate(0, 1.5, 0);
+  stem.rotateZ(-0.5 - rand() * 0.25);
+  stem.translate(LEN * 0.52, 0.15, 0);
+  parts.push(stem);
+
+  const geo = mergeGeometries(parts);
+  geo.rotateY(-keelYaw);
+  geo.translate(site.x, site.h + 0.1, site.z);
+
+  const mat = new THREE.MeshStandardMaterial({
+    map: barkTexture(true),
+    bumpMap: barkTexture(true),
+    bumpScale: 0.4,
+    roughness: 0.95,
+    color: 0xcfc6b6, // bleached silver-gray over the driftwood grain
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.name = 'wreck';
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+// A walker's cairn on the summit, ringed by a little circle of pale pebbles.
+function placeCairn(group) {
+  const rand = mulberry32(subSeed('cairn'));
+  const noise = new Simplex2(subSeed('cairnShape'));
+  const fb = figBase();
+
+  // highest dry interior point, nudged off the fig's toes
+  let best = null;
+  for (let i = 0; i < 240; i++) {
+    const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 14;
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    const h = islandHeight(x, z);
+    if (lagoonFreeboard(x, z) < 0.8) continue;
+    if (fb && Math.hypot(x - fb.x, z - fb.z) < 6.5) continue;
+    if (!best || h > best.h) best = { x, z, h };
+  }
+  if (!best) return;
+
+  const stones = [];
+  const N = 5 + Math.floor(rand() * 2);
+  let y = best.h - 0.1;
+  let px = best.x, pz = best.z;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1);
+    const r0 = 0.34 * (1 - t * 0.66) + 0.04;
+    const g = new THREE.SphereGeometry(r0, 14, 10);
+    const p = g.attributes.position;
+    const v = new THREE.Vector3();
+    for (let k = 0; k < p.count; k++) {
+      v.fromBufferAttribute(p, k);
+      const n = v.clone().normalize();
+      const disp = 1 + 0.24 * noise.fbm(n.x * 2.2 + i * 3.1, (n.y + n.z) * 2.2 - i * 1.7, 3);
+      p.setXYZ(k, v.x * disp, v.y * disp * 0.62, v.z * disp);
+    }
+    g.computeVertexNormals();
+    g.rotateY(rand() * Math.PI * 2);
+    // flattened stones nesting into each other, knee-high in all
+    y += r0 * 0.5;
+    px += (rand() - 0.5) * 0.07;
+    pz += (rand() - 0.5) * 0.07;
+    g.translate(px, y, pz);
+    y += r0 * 0.34;
+    stones.push(g);
+  }
+  const geo = mergeGeometries(stones);
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.96 });
+  const cairn = new THREE.Mesh(geo, mat);
+  cairn.name = 'cairn';
+  cairn.castShadow = true;
+  cairn.receiveShadow = true;
+  group.add(cairn);
+
+  // pebble ring with four compass spokes
+  const ringGeo = new THREE.IcosahedronGeometry(0.5, 0);
+  const ringMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
+  const RING_N = 20, SPOKE_N = 3 * 4;
+  const inst = new THREE.InstancedMesh(ringGeo, ringMat, RING_N + SPOKE_N);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
+    e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  const pale = new THREE.Color(0.94, 0.9, 0.82);
+  const dark = new THREE.Color(0.55, 0.5, 0.44);
+  let placed = 0;
+  const put = (x, z, s, col) => {
+    e.set(rand() * 6.28, rand() * 6.28, rand() * 6.28);
+    q.setFromEuler(e);
+    v.set(x, islandHeight(x, z) + 0.01, z);
+    sc.setScalar(s / 0.5);
+    m.compose(v, q, sc);
+    inst.setMatrixAt(placed, m);
+    inst.setColorAt(placed, col);
+    placed++;
+  };
+  for (let i = 0; i < RING_N; i++) {
+    const a = (i / RING_N) * Math.PI * 2;
+    put(best.x + Math.cos(a) * 1.15, best.z + Math.sin(a) * 1.15, 0.028 + rand() * 0.014, pale);
+  }
+  for (let s = 0; s < 4; s++) {
+    const a = (s / 4) * Math.PI * 2; // world-axis spokes: a compass rose
+    for (let i = 0; i < 3; i++) {
+      const rr = 1.35 + i * 0.22;
+      put(best.x + Math.cos(a) * rr, best.z + Math.sin(a) * rr, 0.05 - i * 0.008, s === 0 ? dark : pale);
+    }
+  }
+  inst.count = placed;
+  inst.receiveShadow = true;
+  group.add(inst);
+}
+
 // Reeds crowding the lagoon's wet margin: taller, stiffer and greener than
 // dune grass, standing with their feet in the shallows.
 function placeReeds(group) {
@@ -497,6 +674,8 @@ export function buildScatter() {
   placePebbles(group);
   placeRocks(group);
   placeDriftwood(group);
+  placeWreck(group);
+  placeCairn(group);
   placeGrass(group);
   placeReeds(group);
   placeSeaweed(group);
