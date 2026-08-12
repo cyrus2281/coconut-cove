@@ -79,24 +79,58 @@ function buildTurtleMesh() {
   tail.position.set(-0.5, 0.1, 0);
   g.add(tail);
 
-  // paddle flippers on shoulder/hip pivots
-  const flipGeo = new THREE.SphereGeometry(1, 10, 7);
-  flipGeo.translate(0.85, 0, 0); // pivot at the joint
-  const mk = (px, pz, len, wid, mirror) => {
+  // Flippers: real swept paddles, not squashed spheres. The outline is a
+  // green-turtle planform — long leading edge sweeping to a back-curved
+  // tip, rounded trailing edge — drawn in the pivot's local frame (+x out
+  // along the limb, +z toward the tail), extruded paper-thin, then given a
+  // touch of downward camber so it reads as a paddle pressing the sand.
+  const flipperGeo = (len, wid, rear, m) => {
+    // m mirrors the planform across the limb axis for the other side of
+    // the body (built into the outline — a negative mesh scale would flip
+    // the normals instead)
+    const s = new THREE.Shape();
+    const L = len, W = wid * m;
+    s.moveTo(0.02, -W * 0.30);
+    if (rear) {
+      // rear paddle: short, broad, rounded — a sculling blade
+      s.bezierCurveTo(L * 0.35, -W * 0.62, L * 0.85, -W * 0.55, L * 1.0, -W * 0.05);
+      s.bezierCurveTo(L * 0.95, W * 0.42, L * 0.45, W * 0.52, 0.02, W * 0.30);
+    } else {
+      // front foil: swept leading edge out to a raked tip, curved trailing
+      // edge easing back into the shoulder
+      s.bezierCurveTo(L * 0.30, -W * 0.55, L * 0.72, -W * 0.48, L * 1.0, -W * 0.10);
+      s.bezierCurveTo(L * 0.88, W * 0.18, L * 0.60, W * 0.36, L * 0.30, W * 0.44);
+      s.bezierCurveTo(L * 0.16, W * 0.47, L * 0.05, W * 0.36, 0.02, W * 0.28);
+    }
+    s.closePath();
+    const geo = new THREE.ExtrudeGeometry(s, { depth: 0.016, bevelEnabled: false });
+    // shape lies in the XY plane; lay it flat (y-up thickness) and camber
+    geo.rotateX(Math.PI / 2);
+    const p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const k = p.getX(i) / len;
+      p.setY(i, p.getY(i) - k * k * len * 0.16); // droop toward the tip
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const flipMat = new THREE.MeshStandardMaterial({
+    color: 0x49543a, roughness: 0.62, side: THREE.DoubleSide,
+  });
+  const mk = (px, pz, splay, rear, m) => {
     const pivot = new THREE.Group();
-    pivot.position.set(px, 0.1, pz);
-    const f = new THREE.Mesh(flipGeo, skinMat);
-    f.scale.set(len, 0.035, wid);
+    pivot.position.set(px, 0.09, pz);
+    const f = new THREE.Mesh(flipperGeo(rear ? 0.24 : 0.46, 0.30, rear, m), flipMat);
     f.castShadow = true;
     pivot.add(f);
-    pivot.rotation.y = mirror; // splay outward
+    pivot.rotation.y = splay * m; // splay outward on its own side
     g.add(pivot);
     return pivot;
   };
-  const frontL = mk(0.3, 0.34, 0.34, 0.13, 0.6);
-  const frontR = mk(0.3, -0.34, 0.34, 0.13, -0.6);
-  const backL = mk(-0.36, 0.26, 0.2, 0.11, 2.2);
-  const backR = mk(-0.36, -0.26, 0.2, 0.11, -2.2);
+  const frontL = mk(0.30, 0.30, -0.55, false, 1);
+  const frontR = mk(0.30, -0.30, -0.55, false, -1);
+  const backL = mk(-0.38, 0.22, -2.35, true, 1);
+  const backR = mk(-0.38, -0.22, -2.35, true, -1);
 
   return { group: g, head, frontL, frontR, backL, backR };
 }
@@ -118,8 +152,10 @@ function buildFlickParticles() {
   return { pts, pos, vel, life, N };
 }
 
-export function buildTurtle(player, footprints) {
-  const rand = mulberry32(subSeed('turtle'));
+export function buildTurtle(player, footprints, tag = '') {
+  // each turtle gets her own stream: separate nesting beaches, separate
+  // moods about whether tonight is the night
+  const rand = mulberry32(subSeed('turtle' + tag));
   const parts = buildTurtleMesh();
   const g = parts.group;
   g.visible = false;
@@ -142,6 +178,7 @@ export function buildTurtle(player, footprints) {
     wasNight: false,
     frozen: false,
     digFlick: 0,
+    crawlK: 0, // live stroke intensity, rocks the shell while crutching
   };
 
   // a beach with a clear waterline-to-dune run: h reaches +0.9 within ~26m
@@ -186,23 +223,28 @@ export function buildTurtle(player, footprints) {
     const dx = tx - T.pos.x, dz = tz - T.pos.z;
     const d = Math.hypot(dx, dz);
     if (d < 0.25) return true;
-    // crutching gait: strokes surge the body forward
+    // crutching gait: strokes surge the body forward. The surge never
+    // drops to zero — a hard half-wave stop-start read as a limp — it
+    // pulses between a slow drag and the stroke's push.
     T.gait += dt * 2.4;
-    const surge = 0.25 + 0.75 * Math.max(Math.sin(T.gait), 0);
+    const stroke = Math.pow(0.5 + 0.5 * Math.sin(T.gait), 1.6);
+    const surge = 0.35 + 0.65 * stroke;
+    T.crawlK = stroke; // the pose block rocks the shell with the stroke
     const step = Math.min(speed * surge * dt, d);
     T.pos.x += (dx / d) * step;
     T.pos.z += (dz / d) * step;
     T.heading = Math.atan2(dz, dx);
     T.trailAcc += step;
     if (T.trailAcc > 0.55) stampTrack(dx / d, dz / d);
-    // flipper stroke pose: both fronts sweep together
-    const sw = Math.sin(T.gait);
-    parts.frontL.rotation.z = 0.25 + sw * 0.45;
-    parts.frontR.rotation.z = 0.25 + sw * 0.45;
-    parts.frontL.rotation.y = 0.6 + Math.cos(T.gait) * 0.5;
-    parts.frontR.rotation.y = -0.6 - Math.cos(T.gait) * 0.5;
-    parts.backL.rotation.z = 0.1 + Math.sin(T.gait + 2.5) * 0.15;
-    parts.backR.rotation.z = 0.1 + Math.sin(T.gait + 2.5 + Math.PI) * 0.15;
+    // flipper stroke: both fronts reach forward together, plant, and sweep
+    // back through the push (sweep rate peaks exactly at the surge peak)
+    const sw = Math.sin(T.gait), cw = Math.cos(T.gait);
+    parts.frontL.rotation.z = 0.14 + Math.max(-sw, 0) * 0.34; // lift on recovery only
+    parts.frontR.rotation.z = 0.14 + Math.max(-sw, 0) * 0.34;
+    parts.frontL.rotation.y = -0.55 - cw * 0.45;
+    parts.frontR.rotation.y = 0.55 + cw * 0.45;
+    parts.backL.rotation.z = 0.08 + Math.sin(T.gait + 2.5) * 0.12;
+    parts.backR.rotation.z = 0.08 + Math.sin(T.gait + 2.5 + Math.PI) * 0.12;
     return false;
   }
 
@@ -241,7 +283,8 @@ export function buildTurtle(player, footprints) {
   }
 
   const _n = new THREE.Vector3(), _q = new THREE.Quaternion(), _yawQ = new THREE.Quaternion(),
-    _up = new THREE.Vector3(0, 1, 0);
+    _pq = new THREE.Quaternion(), _up = new THREE.Vector3(0, 1, 0),
+    _nose = new THREE.Vector3(0, 0, 1); // model pitch axis (nose runs +x)
 
   function update(t, dt) {
     const nightF = uniforms.uNightF.value;
@@ -280,10 +323,12 @@ export function buildTurtle(player, footprints) {
       T.pos.z += (dz / d) * spd * dt;
       const ground = islandHeight(T.pos.x, T.pos.z);
       T.pos.y = Math.max(tide - 0.16 + Math.sin(t * 1.3) * 0.03, ground + 0.1);
-      // front flippers paddle
+      // front flippers fly like slow wings under water
       T.gait += dt * 3.2;
       parts.frontL.rotation.z = Math.sin(T.gait) * 0.5;
       parts.frontR.rotation.z = Math.sin(T.gait + Math.PI) * 0.5;
+      parts.frontL.rotation.y = -0.35;
+      parts.frontR.rotation.y = 0.35;
       if (ground - tide > -0.3) { T.state = 'crawlup'; T.stateT = 0; T.gait = 0; }
     } else if (T.state === 'crawlup') {
       if (!T.frozen) {
@@ -331,6 +376,8 @@ export function buildTurtle(player, footprints) {
       T.gait += dt * 3.2;
       parts.frontL.rotation.z = Math.sin(T.gait) * 0.5;
       parts.frontR.rotation.z = Math.sin(T.gait + Math.PI) * 0.5;
+      parts.frontL.rotation.y = -0.35;
+      parts.frontR.rotation.y = 0.35;
       const ground = islandHeight(T.pos.x, T.pos.z);
       if (tide - ground > 1.4 || T.stateT > 40) {
         T.state = 'idle';
@@ -338,12 +385,19 @@ export function buildTurtle(player, footprints) {
       }
     }
 
-    // pose: sit on the terrain, nose along the heading (tilt ∘ yaw)
+    // pose: sit on the terrain, nose along the heading (tilt ∘ yaw), and
+    // while crutching the shell heaves up on the stroke and the nose bobs —
+    // the lurch reads in the body, not just the flippers
+    const crawling = T.state === 'crawlup' || T.state === 'crawlback';
+    if (!crawling) T.crawlK += (0 - T.crawlK) * Math.min(dt * 6, 1);
     g.position.copy(T.pos);
-    const onLand = T.state === 'crawlup' || T.state === 'dig' || T.state === 'rest' || T.state === 'crawlback';
+    g.position.y += T.crawlK * 0.028;
+    const onLand = crawling || T.state === 'dig' || T.state === 'rest';
     if (onLand) _n.copy(islandNormal(T.pos.x, T.pos.z, 0.6));
     else _n.set(0, 1, 0);
     _yawQ.setFromAxisAngle(_up, -T.heading); // model nose = +x
+    _pq.setFromAxisAngle(_nose, (T.crawlK - 0.5) * (crawling ? 0.055 : 0));
+    _yawQ.multiply(_pq);
     _q.setFromUnitVectors(_up, _n).multiply(_yawQ);
     g.quaternion.slerp(_q, Math.min(dt * 4, 1));
   }
