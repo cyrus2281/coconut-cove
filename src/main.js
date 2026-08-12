@@ -21,6 +21,7 @@ import { buildCoconuts } from './world/coconuts.js';
 import { buildHammock } from './world/hammock.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
+import { buildHorizon } from './world/horizon.js';
 import { buildSky } from './world/sky.js';
 import { buildPalms } from './world/palms.js';
 import { buildScatter } from './world/scatter.js';
@@ -81,6 +82,8 @@ function buildWorldNow() {
   const pond = buildPond();
   scene.add(pond.group);
   sky.attachPond(pond.material);
+  const horizon = buildHorizon();
+  scene.add(horizon.group);
   const palms = buildPalms();
   scene.add(palms.group);
   const fig = buildFig();
@@ -90,9 +93,9 @@ function buildWorldNow() {
   const campfire = buildCampfire(); // after scatter: it camps beside the cairn
   scene.add(campfire.group);
   audio.attachFire(campfire.pos, campfire.fireK);
-  const fireflies = buildFireflies();
+  const fireflies = buildFireflies(player);
   scene.add(fireflies.group);
-  const butterflies = buildButterflies();
+  const butterflies = buildButterflies(player);
   scene.add(butterflies.group);
   const coconuts = buildCoconuts(player, palms.trees, audio);
   scene.add(coconuts.group);
@@ -105,7 +108,7 @@ function buildWorldNow() {
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
   return {
-    terrain, heightTex, ocean, pond, palms, fig, scatterG,
+    terrain, heightTex, ocean, pond, horizon, palms, fig, scatterG,
     campfire, fireflies, butterflies, coconuts, hammock, crabs, fish,
   };
 }
@@ -145,8 +148,8 @@ function applySeedMood() {
 function rebuildWorld() {
   if (world) {
     for (const obj of [
-      world.terrain, world.ocean.group, world.pond.group, world.palms.group,
-      world.fig.group, world.scatterG, world.campfire.group,
+      world.terrain, world.ocean.group, world.pond.group, world.horizon.group,
+      world.palms.group, world.fig.group, world.scatterG, world.campfire.group,
       world.fireflies.group, world.butterflies.group, world.coconuts.group,
       world.hammock.group, world.crabs.group, world.fish.group,
     ]) {
@@ -273,6 +276,7 @@ renderer.setAnimationLoop(() => {
   world.butterflies.update(t, dt);
   world.coconuts.update(t, dt);
   world.hammock.update(t, dt);
+  world.horizon.update(t);
   boat.update(t);
   world.fish.update(t, dt);
   turtle.update(t, dt);
@@ -344,6 +348,15 @@ window.__beach = {
     const x = f.base.x + Math.cos(bearing) * dist, z = f.base.z + Math.sin(bearing) * dist;
     this.teleport(x, z, Math.atan2(-(f.base.x - x), -(f.base.z - z)), 0.05);
     return { base: [+f.base.x.toFixed(1), +f.base.z.toFixed(1)] };
+  },
+  // stand on the beach nearest the volcano, looking out at it
+  volcanoview() {
+    const v = world.horizon.volcano;
+    const az = Math.atan2(v.z, v.x);
+    const r = shoreRadius(az) - 4;
+    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    this.teleport(x, z, Math.atan2(-(v.x - x), -(v.z - z)), 0.02);
+    return { volcano: [Math.round(v.x), Math.round(v.z)], h: Math.round(v.h) };
   },
   // stand on the lagoon bank looking across the water
   pondside(bearing = 0.9) {
