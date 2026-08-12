@@ -109,10 +109,9 @@ export function buildHammock(player, trees, camera) {
     group.add(ring);
   }
 
-  // ---- the "E — lie back" hint ----
+  // ---- the "lie back" prompt: a keycap hint on desktop, a button on touch ----
   const hint = document.createElement('div');
   hint.id = 'hammockHint';
-  hint.textContent = 'E  lie back';
   Object.assign(hint.style, {
     position: 'fixed', left: '50%', bottom: '64px', transform: 'translateX(-50%)',
     fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '13px',
@@ -120,8 +119,26 @@ export function buildHammock(player, trees, camera) {
     border: '1px solid rgba(255,255,255,0.25)', borderRadius: '999px',
     padding: '7px 16px', zIndex: 6, opacity: 0, transition: 'opacity 0.3s',
     pointerEvents: 'none', letterSpacing: '0.08em', backdropFilter: 'blur(4px)',
+    cursor: 'pointer', userSelect: 'none', webkitUserSelect: 'none',
+    touchAction: 'none',
   });
+  // tappable/clickable — pointer events only turn on while it's visible,
+  // so an invisible pill can't catch stray taps
+  hint.addEventListener('touchstart', (e) => {
+    e.preventDefault(); // also swallows the synthetic click that would follow
+    e.stopPropagation();
+    tryToggle();
+  }, { passive: false });
+  hint.addEventListener('click', () => tryToggle());
   document.body.appendChild(hint);
+  const touchRoot = document.getElementById('touchui');
+  const onTouchUI = () => touchRoot && !touchRoot.classList.contains('hidden');
+  let hintText = '';
+  function setHint(text, on) {
+    if (text !== hintText) { hintText = text; hint.textContent = text; }
+    hint.style.opacity = on ? 0.9 : 0;
+    hint.style.pointerEvents = on ? 'auto' : 'none';
+  }
 
   // ---- state ----
   let resting = false;
@@ -141,7 +158,7 @@ export function buildHammock(player, trees, camera) {
     // eyes drift up the trunk line toward the sky
     player.yaw = -yaw + Math.PI / 2 + (rand() < 0.5 ? Math.PI : 0);
     player.pitch = 1.28;
-    hint.style.opacity = 0;
+    setHint(hintText, false);
     return true;
   }
 
@@ -169,19 +186,25 @@ export function buildHammock(player, trees, camera) {
       r.applyAxisAngle(new THREE.Vector3(0, 1, 0), -yaw);
       camera.position.set(mid.x + r.x, mid.y + r.y + Math.sin(t * 0.9) * 0.012, mid.z + r.z);
       camera.rotation.set(player.pitch, player.yaw, ang * 0.7);
-      // any movement key tips you out (after a grace beat)
+      // any movement key tips you out (after a grace beat); on touch the
+      // joystick or the jump button does the same
       if (restT > 0.6) {
         for (const code of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space',
           'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
           if (player.keys.has(code)) { dismount(); break; }
         }
+        if (resting && (player.touchMove.lengthSq() > 0.3 || player.touchJump)) {
+          dismount();
+        }
       }
+      // touch users also get a tappable way out (keyboards need no pill)
+      setHint('sit up', resting && onTouchUI() && restT > 0.6);
       return;
     }
 
-    // proximity hint
+    // proximity prompt: a tap target on touch, a keycap hint on desktop
     const d = Math.hypot(player.pos.x - mid.x, player.pos.z - mid.z);
-    hint.style.opacity = (player.enabled && d < 2.0) ? 0.9 : 0;
+    setHint(onTouchUI() ? 'lie back' : 'E  lie back', player.enabled && d < 2.0);
   }
 
   function dispose() {
