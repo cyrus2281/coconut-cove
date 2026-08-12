@@ -119,10 +119,18 @@ export function buildSky(scene, renderer, camera) {
     envSky.material.uniforms[k].value = val && val.clone ? val.clone() : val;
   });
   envScene.add(envSky);
+  // Each bake is a real hitch (PMREM = 6 face renders + a blur chain + a
+  // fresh render target), so bakes must be RARE. Azimuth never forces one:
+  // the env is baked with the sun due +X at the given elevation, and
+  // scene.environmentRotation spins it to the live azimuth every frame,
+  // continuously and for free. Only an elevation change (the sky actually
+  // looking different) triggers a rebake. size 64 because the env only
+  // feeds blurred ambient + rough reflections.
   let envRT = null;
-  function bakeEnv(sunDir) {
-    envSky.material.uniforms.sunPosition.value.copy(sunDir);
-    const rt = pmrem.fromScene(envScene, 0.04);
+  function bakeEnv(elev) {
+    envSky.material.uniforms.sunPosition.value
+      .set(Math.cos(elev), Math.sin(elev), 0);
+    const rt = pmrem.fromScene(envScene, 0.04, 0.1, 100, { size: 64 });
     scene.environment = rt.texture;
     if (envRT) envRT.dispose();
     envRT = rt;
@@ -298,7 +306,7 @@ export function buildSky(scene, renderer, camera) {
   // ---- the cycle ----
   let tod = START_TOD;
   let waterMat = null, pondMat = null;
-  let lastBakeT = -100, lastBakeElev = 999, lastBakeStorm = 0;
+  let lastBakeT = -100, lastBakeElev = 999;
   const _sunDir = new THREE.Vector3(), _moonDir = new THREE.Vector3();
   const _c = new THREE.Color();
 
@@ -394,25 +402,32 @@ export function buildSky(scene, renderer, camera) {
     moon.position.copy(_moonDir).multiplyScalar(3100);
     moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
 
-    // throttled ambient rebake (storm shifts count as sky changes too).
-    // The steps must stay tiny: each bake swaps scene.environment in one
-    // frame, and at 0.8° per step that ambient pop was visible every ~2s
-    // (it read as the shadows on the sand flickering). Elevation can only
-    // drift ~0.12° between bakes in normal play, so a big accumulated jump
-    // means the clock was set (setTod/reseed) — bake that same frame, while
-    // the whole scene is changing anyway, instead of snapping 0.25s later.
+    // The baked env follows the sun azimuth by rotation — free and smooth.
+    // Negative: the renderer negates the euler ("accommodate left-handed
+    // frame", WebGLMaterials), so the shader lookup matrix is rotY(-y),
+    // and mapping the live sun azimuth onto the baked +X sun needs -az.
+    scene.environmentRotation.y = -az;
+
+    // Throttled ambient rebake, elevation-gated. The steps must stay tiny:
+    // each bake swaps scene.environment in one frame, and at 0.8° per step
+    // that ambient pop was visible every ~2s (it read as the shadows on
+    // the sand flickering). A big accumulated jump means the clock was set
+    // (setTod/reseed) — bake that same frame, while the whole scene is
+    // changing anyway. Deep night skips entirely: every palette has
+    // saturated to its night constant and the env twin never sees storms
+    // (storms only dim environmentIntensity), so a rebake down there would
+    // swap in an identical map.
     const elevJump = Math.abs(elevDeg - lastBakeElev);
+    const deepNight = elevDeg < -9 && lastBakeElev < -9;
     if (elevJump > 5 ||
-        (t - lastBakeT > 0.25 &&
-         (elevJump > 0.12 || Math.abs(storm - lastBakeStorm) > 0.05))) {
-      bakeEnv(_sunDir);
+        (!deepNight && t - lastBakeT > 0.25 && elevJump > 0.22)) {
+      bakeEnv(sunElev);
       lastBakeT = t;
       lastBakeElev = elevDeg;
-      lastBakeStorm = storm;
     }
   }
 
-  bakeEnv(dirFrom(angles(tod).az, angles(tod).sunElev, _sunDir));
+  bakeEnv(angles(tod).sunElev);
   apply(0);
 
   function update(dt, t) {
