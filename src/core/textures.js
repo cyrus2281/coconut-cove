@@ -351,6 +351,94 @@ export function leafletTexture() {
   return track(tex(c));
 }
 
+// ---------------------------------------------------------------- fig bark
+// Smooth pale-gray banyan/fig bark: soft vertical streaks and faint mottle,
+// nothing like the palm's ring scars.
+export function figBarkTexture() {
+  const W = 256, H = 512;
+  const rand = mulberry32(41);
+  const [c, ctx] = makeCanvas(W, H);
+  ctx.fillStyle = '#918a7c';
+  ctx.fillRect(0, 0, W, H);
+
+  const n = noiseField(W, 8, 4, 4);
+  const img = ctx.getImageData(0, 0, W, H);
+  for (let yy = 0; yy < H; yy++) {
+    for (let xx = 0; xx < W; xx++) {
+      const i = (yy * W + xx) * 4;
+      const v = (n[(yy % W) * W + xx] - 0.5) * 26;
+      img.data[i] += v; img.data[i + 1] += v; img.data[i + 2] += v * 0.92;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // long smooth streaks where the trunk muscles
+  for (let i = 0; i < 42; i++) {
+    const x = rand() * W;
+    const light = rand() < 0.5;
+    ctx.strokeStyle = light
+      ? `rgba(178,172,158,${0.08 + rand() * 0.10})`
+      : `rgba(96,90,80,${0.08 + rand() * 0.12})`;
+    ctx.lineWidth = 2 + rand() * 7;
+    ctx.beginPath();
+    ctx.moveTo(x, -10);
+    ctx.bezierCurveTo(x + rand() * 14 - 7, H * 0.33, x + rand() * 14 - 7, H * 0.66, x + rand() * 20 - 10, H + 10);
+    ctx.stroke();
+  }
+  // lichen blotches
+  for (let i = 0; i < 26; i++) {
+    ctx.fillStyle = `rgba(${150 + rand() * 30},${160 + rand() * 25},${130 + rand() * 25},${0.05 + rand() * 0.08})`;
+    ctx.beginPath();
+    ctx.ellipse(rand() * W, rand() * H, 4 + rand() * 16, 3 + rand() * 10, rand() * 3, 0, 6.3);
+    ctx.fill();
+  }
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- fig foliage
+// A cluster-card of overlapping glossy leaves on transparent ground; canopy
+// quads sample it with alphaTest so a few hundred cards read as dense foliage.
+export function leafClusterTexture() {
+  const S = 256;
+  const rand = mulberry32(43);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.clearRect(0, 0, S, S);
+
+  const leaf = (cx, cy, len, wid, ang, shade) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ang);
+    const g = ctx.createLinearGradient(0, -len / 2, 0, len / 2);
+    g.addColorStop(0, `rgb(${26 + shade * 14},${52 + shade * 26},${20 + shade * 10})`);
+    g.addColorStop(1, `rgb(${40 + shade * 18},${78 + shade * 30},${28 + shade * 12})`);
+    ctx.fillStyle = g;
+    // pointed oval
+    ctx.beginPath();
+    ctx.moveTo(0, -len / 2);
+    ctx.bezierCurveTo(wid, -len * 0.18, wid, len * 0.22, 0, len / 2);
+    ctx.bezierCurveTo(-wid, len * 0.22, -wid, -len * 0.18, 0, -len / 2);
+    ctx.fill();
+    // midrib
+    ctx.strokeStyle = `rgba(190,210,130,${0.35 + shade * 0.25})`;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(0, -len / 2 + 2);
+    ctx.lineTo(0, len / 2 - 2);
+    ctx.stroke();
+    ctx.restore();
+  };
+
+  // leaves radiate loosely from the card centre, denser in the middle
+  for (let i = 0; i < 58; i++) {
+    const a = rand() * Math.PI * 2;
+    const r = Math.pow(rand(), 0.6) * S * 0.36;
+    const cx = S / 2 + Math.cos(a) * r, cy = S / 2 + Math.sin(a) * r;
+    const ang = a + Math.PI / 2 + (rand() - 0.5) * 1.1;
+    leaf(cx, cy, 34 + rand() * 40, 9 + rand() * 7, ang, rand());
+  }
+  return track(tex(c));
+}
+
 // ---------------------------------------------------------------- coconut husk
 export function huskTexture() {
   const S = 256;

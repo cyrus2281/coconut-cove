@@ -13,6 +13,7 @@ import {
   buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland, lagoonInfo,
 } from './world/island.js';
 import { buildPond } from './world/pond.js';
+import { buildFig } from './world/fig.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
@@ -77,6 +78,8 @@ function buildWorldNow() {
   sky.attachPond(pond.material);
   const palms = buildPalms();
   scene.add(palms.group);
+  const fig = buildFig();
+  scene.add(fig.group);
   const scatterG = buildScatter();
   scene.add(scatterG);
   const crabs = buildCrabs(player, footprints);
@@ -85,7 +88,7 @@ function buildWorldNow() {
   scene.add(fish.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
-  return { terrain, heightTex, ocean, pond, palms, scatterG, crabs, fish };
+  return { terrain, heightTex, ocean, pond, palms, fig, scatterG, crabs, fish };
 }
 
 function disposeDeep(obj) {
@@ -124,7 +127,7 @@ function rebuildWorld() {
   if (world) {
     for (const obj of [
       world.terrain, world.ocean.group, world.pond.group, world.palms.group,
-      world.scatterG, world.crabs.group, world.fish.group,
+      world.fig.group, world.scatterG, world.crabs.group, world.fish.group,
     ]) {
       scene.remove(obj);
       disposeDeep(obj);
@@ -292,6 +295,14 @@ window.__beach = {
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
   lagoon: () => lagoonInfo(),
+  // stand back from the big fig, looking at it
+  figview(bearing = 2.2, dist = 14) {
+    const f = world.fig;
+    if (!f.base) return 'no fig on this island';
+    const x = f.base.x + Math.cos(bearing) * dist, z = f.base.z + Math.sin(bearing) * dist;
+    this.teleport(x, z, Math.atan2(-(f.base.x - x), -(f.base.z - z)), 0.05);
+    return { base: [+f.base.x.toFixed(1), +f.base.z.toFixed(1)] };
+  },
   // stand on the lagoon bank looking across the water
   pondside(bearing = 0.9) {
     const L = lagoonInfo();
