@@ -17,7 +17,7 @@ module is written seed-ready along the way).
   - [x] Crab footprint trails: 3-cell track atlas (foot/crab/turtle) + per-instance `aKind`/size, buffer 1024; crabs stitch tracks that waves wash
   - [x] Fish schools: 2 instanced schools; anchors patrol the shelf and slide with the tide to hold depth; verified flee (mean dist 2.2→4.1 m)
   - [x] Gulls that land: soar → bezier glide-in → folded-wing ground hops/pecks → flush at 7 m or when the tide soaks their patch (traced full cycle)
-- [ ] **Phase 6 — Sea turtle at night**: on random nights swim in → haul out → dig (sand flicks + pit) → rest → return before dawn; wide track pairs the tide erases
+- [x] **Phase 6 — Sea turtle at night**: 80% of nights she swims in, crutches up-beach (both fronts together, body lurching), digs with alternating rear-flipper sand flicks, rests, returns before dawn (hurries if the sky brightens); freezes when approached within 3.6 m; wide track pairs via atlas cell 2; `__beach.turtle.visit()`
 - [ ] **Phase 7 — Passing rain squall**: weather director (clear → building → squall → clearing), instanced rain streaks, gray dimpled water, whole-island wetting via `uRainWet`, rain audio layer
 - [ ] **Phase 8 — Positional audio**: stereo-panned distance-based surf/wind, palm rustle under crowns, synthesized gull cries, rain overhead
 - [ ] **Phase 9 — Seeded island generator**: master seed (`?seed=` else default) hashed into sub-seeds for shoreline/terrain/palms/scatter/zones/cay/fauna; `buildWorld(seed)`/`disposeWorld()` refactor; "Use random seed" toggle on the title screen (rebuilds live, URL untouched); seed shown for sharing
