@@ -141,6 +141,10 @@ window.__beach = {
   warp(s, skyToo = true) { t += s; if (skyToo) sky.warp(s); },
   setTod(v) { sky.setTod(v); },
   getTod: () => sky.getTod(),
+  tide: () => ({
+    level: +uniforms.uTide.value.toFixed(3),
+    rising: Math.sin(uniforms.uTideAng.value) < 0,
+  }),
   // lay a test track of prints marching down the beach into the surge zone
   stampLine(az = 1.55) {
     const ox = Math.cos(az), oz = Math.sin(az);

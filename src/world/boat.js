@@ -86,7 +86,7 @@ export function buildBoat() {
     const az = t * ((Math.PI * 2) / LAP_SECONDS) + 0.8;
     g.position.set(
       Math.cos(az) * LAP_RADIUS,
-      Math.sin(t * 0.47) * 0.3 + 0.5,
+      Math.sin(t * 0.47) * 0.3 + 0.5 + uniforms.uTide.value,
       Math.sin(az) * LAP_RADIUS
     );
     g.rotation.y = -az - Math.PI / 2; // bow along the (counter-clockwise) lap

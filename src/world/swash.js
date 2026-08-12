@@ -14,6 +14,20 @@
 // slower backwash on [SW_A, SW_B], lull on [SW_B, 1).
 
 import * as THREE from 'three';
+import { DAY_CYCLE_SECONDS } from '../core/env.js';
+
+// ---- tide ----
+// Semidiurnal: two highs and two lows per day cycle. Everything upstream of
+// the swash model measures heights relative to the *current* water level
+// (mean level y=0 + tide), so the surf, wet sand, footprints and crabs all
+// migrate up and down the beach with it.
+export const TIDE = { amp: 0.45, cycles: 2, phase: 1.1 };
+export const TIDE_OMEGA = (TIDE.cycles * 2 * Math.PI) / DAY_CYCLE_SECONDS; // rad/s
+
+export function tideFromTod(tod) {
+  const angle = TIDE.cycles * 2 * Math.PI * tod + TIDE.phase;
+  return { level: TIDE.amp * Math.cos(angle), angle };
+}
 
 export const ZONES = [
   // azimuth center, angular width (rad), max run-up height (m), period (s), phase (s)
@@ -70,6 +84,20 @@ const float SW_A = 0.30;      // rush-up fraction of the cycle
 const float SW_B = 0.85;      // end of backwash
 const float SW_RISE_P = 0.6;  // rise easing exponent (fast start, soft landing)
 const float SW_FALL_P = 1.5;  // backwash easing exponent
+const float TIDE_AMP = ${TIDE.amp.toFixed(4)};
+const float TIDE_OMEGA = ${TIDE_OMEGA.toFixed(7)};
+
+// seconds since the slow tide (plus a small wave-lap reach) last covered an
+// ABSOLUTE height. 0 while covered; huge if the tide never gets that high.
+float sw_tideSince(float hAbs, float reach, float tideAng) {
+  float c = (hAbs - reach) / TIDE_AMP;
+  if (c <= -1.0) return 0.0;
+  if (c >= 1.0) return 1.0e6;
+  float thc = acos(c);                    // covered while angle in [-thc, thc]
+  float u = mod(tideAng + thc, 6.2831853);
+  if (u <= 2.0 * thc) return 0.0;         // covered right now
+  return (u - 2.0 * thc) / TIDE_OMEGA;
+}
 
 float sw_angFall(float az, float center, float width) {
   float d = az - center;

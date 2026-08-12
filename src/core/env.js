@@ -4,7 +4,8 @@
 
 import * as THREE from 'three';
 
-export const WATER_LEVEL = 0;
+export const WATER_LEVEL = 0;     // mean sea level; the live level is uTide
+export const DAY_CYCLE_SECONDS = 720; // 12-minute full day (shared by sky + tides)
 
 // Sun: azimuth in radians (world XZ, x=cos, z=sin), elevation in radians.
 export const SUN_AZIMUTH = 2.35;
@@ -27,6 +28,8 @@ export const uniforms = {
   uWindDir: { value: new THREE.Vector2(0.85, 0.53).normalize() },
   uWindAmp: { value: 1.0 },
   uNightF: { value: 0 }, // 0 by day → 1 in full night (drives bioluminescence)
+  uTide: { value: 0 },    // current tide level (m, about mean sea level y=0)
+  uTideAng: { value: 0 }, // current tide angle (rad) — see swash.js sw_tideSince
   uFogColor: { value: FOG_COLOR.clone() },
   uFogDensity: { value: FOG_DENSITY },
 };

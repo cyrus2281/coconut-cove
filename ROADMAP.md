@@ -10,7 +10,7 @@ module is written seed-ready along the way).
   - [x] Bioluminescent night surf: `uNightF` uniform from sun elevation; foam/swash glows electric cyan in the water shader; a glowing strip chases the retreating swash on the sand
   - [x] Shooting stars: pooled additive streak sprites, random spawns at night (`__beach.sky.meteor(dur, az)` to force one)
   - [x] Distant sailboat: procedural sloop circling at ~640 m, bob + heel, masthead light after dark
-- [ ] **Phase 2 — Tides**: semidiurnal `uTide` (A≈0.45 m, two cycles per 12-min day); ocean lift, depth terms, swash reference, falling-tide damp apron, player wade + crab logic
+- [x] **Phase 2 — Tides**: semidiurnal `uTide` (A=0.45 m, two cycles per 12-min day, `tideFromTod`); ocean lift, tide-aware depth terms, swash heights relative to the live waterline, `sw_tideSince` falling-tide damp apron (dries ~3× slower than swash), player wade/prints + crab band follow the tide; `__beach.tide()`
 - [ ] **Phase 3 — Offshore sandbar islet**: second cay in `islandHeight` (~85 m out, peak +0.35 m), heightmap rebake, shell/driftwood scatter; wadeable at low tide only (emergent)
 - [ ] **Phase 4 — Wave push physics**: analytic swash velocity (d/dt of run-up) shoves the player up-beach on the bore, drags seaward on the backwash, scaled by submersion
 - [ ] **Phase 5 — Beach life**

@@ -7,6 +7,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
+import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
 import { runupNow } from './swash.js';
 
@@ -98,13 +99,15 @@ function buildCrab(tint) {
 }
 
 // find a spot on the beach band near an azimuth
+// (the band is measured above the live waterline, so it rides the tide)
 function beachPoint(homeAz, spread, rand, hMin = 0.12, hMax = 0.95) {
+  const tide = uniforms.uTide.value;
   for (let tries = 0; tries < 12; tries++) {
     const az = homeAz + (rand() - 0.5) * spread;
     for (let r = shoreRadius(az) + 1.5; r > shoreRadius(az) - 10; r -= 0.6) {
       const x = Math.cos(az) * r, z = Math.sin(az) * r;
       const h = islandHeight(x, z);
-      if (h >= hMin && h <= hMax) return { x, z, h };
+      if (h - tide >= hMin && h - tide <= hMax) return { x, z, h };
     }
   }
   return null;
@@ -155,8 +158,9 @@ export function buildCrabs(player) {
       c.timer -= dt;
 
       // 1) incoming surge? sprint inland (uses the shared swash model)
+      const tide = uniforms.uTide.value;
       const runup = Math.max(runupNow(az, t), runupNow(az, t + 0.6));
-      const threatened = c.h < runup + 0.05;
+      const threatened = c.h - tide < runup + 0.05;
 
       // 2) player too close?
       const pd = Math.hypot(player.pos.x - c.pos.x, player.pos.z - c.pos.y);
@@ -201,7 +205,7 @@ export function buildCrabs(player) {
         const nx = c.pos.x + c.dir.x * c.speed * dt;
         const nz = c.pos.y + c.dir.y * c.speed * dt;
         const nh = islandHeight(nx, nz);
-        if (nh > -0.02 && nh < 1.5) {
+        if (nh - tide > -0.02 && nh - tide < 1.5) {
           c.pos.set(nx, nz);
           c.h = nh;
         } else {

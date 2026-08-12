@@ -50,6 +50,7 @@ function buildDiskGeometry() {
 
 const VERT = /* glsl */ `
 uniform float uTime;
+uniform float uTide;
 uniform sampler2D uHeight;
 uniform float uHmapHalf;
 uniform vec4 uZone1;
@@ -93,8 +94,9 @@ void gerstner(vec4 w, vec2 p, float t, float ampScale, inout vec3 disp, inout ve
 
 void main() {
   vec3 wp = (modelMatrix * vec4(position, 1.0)).xyz;
+  wp.y += uTide; // the whole surface breathes with the tide
   float hTerr = terrainH(wp.xz);
-  float depth0 = -hTerr;
+  float depth0 = uTide - hTerr;
 
   // waves flatten as the water shallows, and fade out before the mesh
   // becomes too sparse to resolve them (the far ring stays flat)
@@ -305,6 +307,7 @@ export function buildOcean(heightTex) {
       uDebug: { value: 0 },
       ...swashUniforms,
       uTime: uniforms.uTime,
+      uTide: uniforms.uTide,
       uSunDir: uniforms.uSunDir,
       uSunColor: { value: new THREE.Color(1.0, 0.86, 0.62) },
       uHeight: { value: heightTex },

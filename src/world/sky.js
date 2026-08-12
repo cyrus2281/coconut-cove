@@ -6,11 +6,12 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { uniforms, FOG_COLOR, FOG_DENSITY } from '../core/env.js';
+import { uniforms, FOG_COLOR, FOG_DENSITY, DAY_CYCLE_SECONDS } from '../core/env.js';
 import { cloudTexture } from '../core/textures.js';
 import { mulberry32 } from '../core/rng.js';
+import { tideFromTod } from './swash.js';
 
-export const DAY_CYCLE_SECONDS = 720; // 12-minute full day
+export { DAY_CYCLE_SECONDS };
 const DAY_FRAC = 0.72;    // fraction of the cycle with the sun up (~8.6 min day, ~3.4 min night)
 const AZ0 = -1.17;        // start-of-cycle azimuth offset
 const START_TOD = 0.60;   // begin in golden afternoon, ~90s before sunset colors
@@ -363,6 +364,11 @@ export function buildSky(scene, renderer, camera) {
     for (const cl of clouds) cl.sprite.material.color.copy(_c);
     starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg));
     uniforms.uNightF.value = 1 - sstep(-10, -2, elevDeg);
+
+    // tide rides the same clock
+    const tide = tideFromTod(tod);
+    uniforms.uTide.value = tide.level;
+    uniforms.uTideAng.value = tide.angle;
     moon.position.copy(_moonDir).multiplyScalar(3100);
     moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
 

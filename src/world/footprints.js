@@ -22,6 +22,7 @@ attribute float aH;
 attribute float aSide;
 
 uniform float uTime;
+uniform float uTide;
 uniform float uLife;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
@@ -44,14 +45,16 @@ void main() {
   float H2 = uZone2.z * sw_angFall(az, uZone2.x, uZone2.y);
 
   // when does the next wave roll over this spot after the stamp?
-  float nc = sw_nextCover(aStamp, aH, H1, uZone1.w, uZone1Ph);
-  nc = min(nc, sw_nextCover(aStamp, aH, H2, uZone2.w, uZone2Ph));
-  nc = min(nc, sw_nextCover(aStamp, aH, uAmbient.x, uAmbient.y, 0.0));
+  // (heights are measured above the current, tide-shifted waterline)
+  float hRel = aH - uTide;
+  float nc = sw_nextCover(aStamp, hRel, H1, uZone1.w, uZone1Ph);
+  nc = min(nc, sw_nextCover(aStamp, hRel, H2, uZone2.w, uZone2Ph));
+  nc = min(nc, sw_nextCover(aStamp, hRel, uAmbient.x, uAmbient.y, 0.0));
   float wash = 1.0 - smoothstep(0.0, 1.6, uTime - nc);
 
   // gradual ageing; prints in the saturated fringe melt quickly
   float age = max(uTime - aStamp, 0.0);
-  float life = uLife * (aH < 0.24 ? 0.15 : 1.0);
+  float life = uLife * (hRel < 0.24 ? 0.15 : 1.0);
   float fade = 1.0 - smoothstep(life * 0.5, life, age);
 
   vFade = fade * wash;
@@ -126,6 +129,7 @@ export function buildFootprints() {
     polygonOffsetUnits: -4,
     uniforms: {
       uTime: uniforms.uTime,
+      uTide: uniforms.uTide,
       uSunDir: uniforms.uSunDir,
       uSunColor: uniforms.uSunColor,
       uSunI: uniforms.uSunI,

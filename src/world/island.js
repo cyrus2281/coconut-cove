@@ -115,6 +115,8 @@ export function buildTerrain() {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uSunI = uniforms.uSunI;
     shader.uniforms.uNightF = uniforms.uNightF;
+    shader.uniforms.uTide = uniforms.uTide;
+    shader.uniforms.uTideAng = uniforms.uTideAng;
     shader.uniforms.uCaustic = { value: caustics };
     shader.uniforms.uBreakup = { value: breakup };
     Object.assign(shader.uniforms, swashUniforms);
@@ -131,6 +133,8 @@ export function buildTerrain() {
       uniform float uTime;
       uniform float uSunI;
       uniform float uNightF;
+      uniform float uTide;
+      uniform float uTideAng;
       uniform sampler2D uCaustic;
       uniform sampler2D uBreakup;
       uniform vec4 uZone1;
@@ -154,8 +158,10 @@ export function buildTerrain() {
           diffuseColor.rgb *= mix(1.0, 0.90, smoothstep(0.62, 0.9, macro2));
 
           // --- wet sand from the shared swash model ---
-          // ragged wet line: jitter the effective height with noise
-          float hEff = vWPos.y + (macro2 - 0.5) * 0.16;
+          // ragged wet line: jitter the effective height with noise.
+          // hAbs is absolute; hEff is height above the *current* waterline.
+          float hAbs = vWPos.y + (macro2 - 0.5) * 0.16;
+          float hEff = hAbs - uTide;
           float az = atan(vWPos.z, vWPos.x);
           float H1 = uZone1.z * sw_angFall(az, uZone1.x, uZone1.y);
           float H2 = uZone2.z * sw_angFall(az, uZone2.x, uZone2.y);
@@ -164,6 +170,9 @@ export function buildTerrain() {
           lc = max(lc, sw_lastCover(hEff, H2, uZone2.w, uZone2Ph, uTime));
           float since = max(uTime - lc, 0.0);
           float wet = pow(exp(-since / uDrySecs), 0.72); // stays dark, then lets go
+          // the ebbing tide leaves broad flats that dry much more slowly
+          float sinceTide = sw_tideSince(hAbs, uAmbient.x * 0.7, uTideAng);
+          wet = max(wet, pow(exp(-sinceTide / (uDrySecs * 3.2)), 0.72));
           wet = max(wet, 1.0 - smoothstep(0.0, 0.15, hEff)); // saturated fringe
           wet = clamp(wet, 0.0, 1.0);
 
@@ -184,7 +193,7 @@ export function buildTerrain() {
             * (0.25 + 0.75 * smoothstep(0.45, 0.85, fpB));
 
           // underwater absorption tint
-          float sub = max(0.0, -vWPos.y);
+          float sub = max(0.0, uTide - vWPos.y);
           diffuseColor.rgb *= pow(vec3(0.66, 0.80, 0.84), vec3(min(sub * 0.55, 4.0)));
           vWetness = wet;
         }`
@@ -199,7 +208,7 @@ export function buildTerrain() {
         `#include <emissivemap_fragment>
         {
           // fake caustics dancing on the submerged sand
-          float sub = max(0.0, -vWPos.y);
+          float sub = max(0.0, uTide - vWPos.y);
           float cmask = smoothstep(0.05, 0.5, sub) * (1.0 - smoothstep(1.5, 7.0, sub));
           if (cmask > 0.001) {
             vec2 cuv = vWPos.xz * 0.09;
@@ -224,7 +233,7 @@ export function buildTerrain() {
       'float vWetness = 0.0;\nfloat vBio = 0.0;\nvoid main() {'
     );
   };
-  mat.customProgramCacheKey = () => 'cove-sand-v2';
+  mat.customProgramCacheKey = () => 'cove-sand-v3';
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
