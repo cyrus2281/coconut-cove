@@ -172,12 +172,16 @@ export function buildCrabs(player, footprints) {
       const pd = Math.hypot(player.pos.x - c.pos.x, player.pos.z - c.pos.y);
 
       if (threatened && c.state !== 'dash') {
-        const inland = beachPoint(az, 0.06, c.rand, runup + 0.25, runup + 0.6);
+        const inland = beachPoint(az, 0.06, c.rand, runup + 0.2, runup + 0.9);
         if (inland) {
           steer(c, inland.x, inland.z, 1.55);
-          c.state = 'dash';
-          c.timer = 2.5;
+        } else {
+          // no dry spot found — just bolt straight up the beach
+          c.dir.set(-Math.cos(az), -Math.sin(az));
+          c.speed = 1.55;
         }
+        c.state = 'dash';
+        c.timer = 2.5;
       } else if (pd < 2.2 && c.state !== 'flee' && c.state !== 'dash') {
         // run away, mostly along the shore
         const awayX = (c.pos.x - player.pos.x) / pd, awayZ = (c.pos.y - player.pos.z) / pd;
@@ -206,12 +210,22 @@ export function buildCrabs(player, footprints) {
         }
       }
 
-      // integrate, staying on the beach band
+      // integrate, staying on the beach band — but never wall a crab in:
+      // when the tide has swamped it (or left it stranded high), any step
+      // that improves matters is allowed, so it can always climb back out
       if (c.speed > 0) {
         const nx = c.pos.x + c.dir.x * c.speed * dt;
         const nz = c.pos.y + c.dir.y * c.speed * dt;
         const nh = islandHeight(nx, nz);
-        if (nh - tide > -0.02 && nh - tide < 1.5) {
+        const relNext = nh - tide, relCur = c.h - tide;
+        const inBand = relNext > -0.02 && relNext < 1.5;
+        // a swamped crab may cross small submerged dips (else it gets
+        // king-of-the-drowned-hill locked on a local crest), but never
+        // deeper water; a stranded-high crab may step back down
+        const escaping =
+          (relCur <= -0.02 && relNext > Math.max(relCur - 0.05, -0.95)) ||
+          (relCur >= 1.5 && relNext < relCur);
+        if (inBand || escaping) {
           c.pos.set(nx, nz);
           c.h = nh;
           // tiny stitch tracks in the crab's wake
