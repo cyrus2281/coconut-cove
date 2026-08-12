@@ -16,6 +16,7 @@ import { buildPond } from './world/pond.js';
 import { buildFig } from './world/fig.js';
 import { buildCampfire } from './world/campfire.js';
 import { buildFireflies } from './world/fireflies.js';
+import { buildButterflies } from './world/butterflies.js';
 import { reseedSwash } from './world/swash.js';
 import { buildOcean } from './world/water.js';
 import { buildSky } from './world/sky.js';
@@ -89,13 +90,18 @@ function buildWorldNow() {
   audio.attachFire(campfire.pos, campfire.fireK);
   const fireflies = buildFireflies();
   scene.add(fireflies.group);
+  const butterflies = buildButterflies();
+  scene.add(butterflies.group);
   const crabs = buildCrabs(player, footprints);
   scene.add(crabs.group);
   const fish = buildFish(player);
   scene.add(fish.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
   applyAnisotropy(renderer);
-  return { terrain, heightTex, ocean, pond, palms, fig, scatterG, campfire, fireflies, crabs, fish };
+  return {
+    terrain, heightTex, ocean, pond, palms, fig, scatterG,
+    campfire, fireflies, butterflies, crabs, fish,
+  };
 }
 
 function disposeDeep(obj) {
@@ -135,7 +141,8 @@ function rebuildWorld() {
     for (const obj of [
       world.terrain, world.ocean.group, world.pond.group, world.palms.group,
       world.fig.group, world.scatterG, world.campfire.group,
-      world.fireflies.group, world.crabs.group, world.fish.group,
+      world.fireflies.group, world.butterflies.group,
+      world.crabs.group, world.fish.group,
     ]) {
       scene.remove(obj);
       disposeDeep(obj);
@@ -253,6 +260,7 @@ renderer.setAnimationLoop(() => {
   world.crabs.update(t, dt);
   world.campfire.update(t, dt);
   world.fireflies.update(t, dt);
+  world.butterflies.update(t, dt);
   boat.update(t);
   world.fish.update(t, dt);
   turtle.update(t, dt);
@@ -287,6 +295,7 @@ window.__beach = {
   get fish() { return world.fish; },
   get campfire() { return world.campfire; },
   get fireflies() { return world.fireflies; },
+  get butterflies() { return world.butterflies; },
   seed: () => getSeed(),
   reseed(s) {
     setSeed(s === undefined ? randomSeed() : s);
