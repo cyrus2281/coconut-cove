@@ -324,6 +324,23 @@ export function buildPalms() {
     lean: 0.4 + rand() * 0.4,
   });
 
+  // a matched pair ~4.2m apart on its own stretch of beach: every island
+  // gets somewhere to sling the hammock
+  {
+    const hamAz = pairAz + 2.3 + rand() * 1.1;
+    const hamD = -(5.5 + rand() * 2);
+    const hamR = Math.max(shoreRadius(hamAz) + hamD, 18);
+    const half = 2.1 / hamR; // ~4.2m along the shore between the two trunks
+    for (const s of [-1, 1]) {
+      spots.push({
+        az: hamAz + half * s,
+        d: hamD,
+        height: 5.9 + rand() * 1.6,
+        lean: 0.45 + rand() * 0.5,
+      });
+    }
+  }
+
   const trees = [];
   for (let i = 0; i < spots.length; i++) {
     const s = spots[i];

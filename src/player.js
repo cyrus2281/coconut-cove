@@ -28,6 +28,7 @@ export class Player {
     this.bobPhase = 0;
     this.bob = 0;
     this.enabled = false; // set true when the intro overlay is dismissed
+    this.resting = false; // lying in the hammock: it owns the camera
 
     // footprint stamping
     this.onStep = null;   // (x, z, h, dirX, dirZ, side) => void
@@ -112,6 +113,7 @@ export class Player {
   }
 
   update(dt) {
+    if (this.resting) return; // the hammock drives the camera; keys still read
     const k = this.keys;
     let fwd = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     let strafe = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);

@@ -439,6 +439,31 @@ export function leafClusterTexture() {
   return track(tex(c));
 }
 
+// ---------------------------------------------------------------- hammock cloth
+// Sun-faded woven stripes for the hammock: teal / cream / coral bands with
+// a touch of thread noise.
+export function hammockTexture() {
+  const W = 128, H = 256;
+  const rand = mulberry32(29);
+  const [c, ctx] = makeCanvas(W, H);
+  const bands = ['#7fb2a6', '#e8dfc8', '#cf8570', '#e8dfc8', '#5f8f96', '#e0d3b8'];
+  const bh = H / 14;
+  for (let i = 0; i < 14; i++) {
+    ctx.fillStyle = bands[i % bands.length];
+    ctx.fillRect(0, i * bh, W, bh + 1);
+  }
+  // weave: fine alternating warp lines + wear speckle
+  for (let x = 0; x < W; x += 2) {
+    ctx.fillStyle = `rgba(60,50,40,${0.05 + (x % 4 === 0 ? 0.05 : 0)})`;
+    ctx.fillRect(x, 0, 1, H);
+  }
+  for (let i = 0; i < 900; i++) {
+    ctx.fillStyle = `rgba(255,250,235,${0.04 + rand() * 0.09})`;
+    ctx.fillRect(rand() * W, rand() * H, 1.5, 1.5);
+  }
+  return track(tex(c));
+}
+
 // ---------------------------------------------------------------- coconut husk
 export function huskTexture() {
   const S = 256;

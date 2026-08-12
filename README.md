@@ -32,6 +32,8 @@ favorite with `http://localhost:5173/?seed=12345`.
 | mouse | look (pointer lock, click-drag fallback) |
 | `Shift` | run |
 | `Space` | jump |
+| `E` | lie back in the hammock (any move key gets you up) |
+| `R` | grow a brand-new island (same as the ⟳ button, seed lands in the URL) |
 | `M` | toggle ocean sound |
 | touch | 📱 button on the title screen: on-screen joystick + JUMP, drag the world to look (auto-enables on first touch) |
 
@@ -94,9 +96,19 @@ Everything is generated at startup from seeded noise — geometry, textures
   the waterline, wind that picks up on the dunes and in storms, palm rustle
   under the crowns, synthesized gull cries from where the gulls actually
   are, rain overhead. No audio files.
+- **The interior** — every island's heart holds a reed-ringed freshwater
+  lagoon (wade in, watch it dimple in the rain), a huge buttress-rooted
+  fig with a rope swing, a shipwreck's ribs cresting a dune, a walker's
+  cairn on the summit, and a driftwood campfire beside it — crackling,
+  throwing embers downwind, beaten down to smoke by every squall.
+- **Small joys** — butterflies over the day grass and fireflies over the
+  night grass; loose coconuts you can punt down the beach and watch the
+  surf strand back on the wet sand; a striped hammock between two palms
+  (`E` to lie back and watch the fronds, clouds and shooting stars).
 - **Seeded worlds** — one master seed grows the shoreline, terrain, surge
-  zones, cay bearing, palms, scatter and fauna homes. Same seed, same island,
-  every time.
+  zones, cay bearing, lagoon, big fig, landmarks, palms, scatter and fauna
+  homes. Same seed, same island, every time — and the ⟳ / `R` button pins
+  each new island's seed in the URL so you can share it.
 
 ## Debug console
 
@@ -114,4 +126,7 @@ __beach.reseed()                // regrow a random island (reseed(1234) for a sp
 __beach.sky.meteor(2)           // force a shooting star (at night)
 __beach.turtle.visit()          // invite the sea turtle ashore right now
 __beach.stampLine()             // lay a test track of footprints into the surge zone
+__beach.pondside()              // stand on the lagoon bank
+__beach.figview()               // face the grandmother fig
+__beach.campview()              // stand by the campfire
 ```
