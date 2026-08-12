@@ -56,6 +56,32 @@ function dirFrom(az, elev, out) {
   ).normalize();
 }
 
+// horizontal streak, bright head at the right, soft gaussian cross-section
+function streakTexture() {
+  const W = 128, H = 16;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  for (let j = 0; j < H; j++) {
+    const dy = (j + 0.5) / H - 0.5;
+    const g = Math.exp(-dy * dy * 26);
+    for (let i = 0; i < W; i++) {
+      const u = i / (W - 1);
+      const head = Math.pow(u, 3.2);                 // brightens toward the head
+      const tip = 1 - Math.max(0, (u - 0.94)) / 0.06; // rounded head tip
+      const a = Math.min(head * tip, 1) * g;
+      const k = (j * W + i) * 4;
+      img.data[k] = 235; img.data[k + 1] = 240; img.data[k + 2] = 255;
+      img.data[k + 3] = Math.round(a * 255);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 function moonTexture() {
   const c = document.createElement('canvas');
   c.width = c.height = 128;
@@ -72,7 +98,7 @@ function moonTexture() {
   return t;
 }
 
-export function buildSky(scene, renderer) {
+export function buildSky(scene, renderer, camera) {
   const sky = new Sky();
   sky.scale.setScalar(4500);
   const u = sky.material.uniforms;
@@ -183,6 +209,79 @@ export function buildSky(scene, renderer) {
     scene.add(stars);
   }
 
+  // shooting stars: a tiny pool of streak sprites, spawned at random while
+  // the stars are out. The sprite is rotated in screen space to match the
+  // projected travel direction each frame.
+  const meteors = [];
+  {
+    const tex = streakTexture();
+    for (let i = 0; i < 3; i++) {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        fog: false,
+      }));
+      s.scale.set(310, 13, 1);
+      s.visible = false;
+      scene.add(s);
+      meteors.push({ sprite: s, age: 1e9, dur: 0.5, pos: new THREE.Vector3(), vel: new THREE.Vector3() });
+    }
+  }
+  let meteorWait = 6;
+  const _mNorm = new THREE.Vector3(), _mP1 = new THREE.Vector3(), _mP2 = new THREE.Vector3();
+
+  function spawnMeteor(dur, azHint) {
+    const m = meteors.find((mm) => mm.age >= mm.dur);
+    if (!m) return false;
+    const a = azHint !== undefined ? azHint : Math.random() * Math.PI * 2;
+    const elev = 0.45 + Math.random() * 0.65;
+    m.pos.set(
+      Math.cos(elev) * Math.cos(a) * 3200,
+      Math.sin(elev) * 3200,
+      Math.cos(elev) * Math.sin(a) * 3200
+    );
+    // travel roughly along the dome, biased downward
+    m.vel.set(Math.random() - 0.5, -(0.4 + Math.random() * 0.5), Math.random() - 0.5).normalize();
+    _mNorm.copy(m.pos).normalize();
+    m.vel.addScaledVector(_mNorm, -m.vel.dot(_mNorm));
+    if (m.vel.lengthSq() < 0.05) m.vel.set(0.7, -0.7, 0);
+    m.dur = dur || 0.45 + Math.random() * 0.4;
+    // total travel is a fixed arc; speed follows from the lifetime
+    m.vel.normalize().multiplyScalar((850 + Math.random() * 550) / m.dur);
+    m.age = 0;
+    if (dur) { // debug spawns start mid-arc at peak brightness
+      m.age = m.dur * 0.42;
+      m.pos.addScaledVector(m.vel, m.age);
+    }
+    m.sprite.visible = true;
+    return true;
+  }
+
+  function updateMeteors(dt) {
+    const vis = starMat.opacity / 0.85; // ride the star fade
+    meteorWait -= dt * vis;
+    if (meteorWait <= 0 && vis > 0.5) {
+      spawnMeteor();
+      meteorWait = 5 + Math.random() * 13;
+    }
+    for (const m of meteors) {
+      if (m.age >= m.dur) { m.sprite.visible = false; continue; }
+      m.age += dt;
+      m.pos.addScaledVector(m.vel, dt);
+      m.sprite.position.copy(m.pos);
+      const k = m.age / m.dur;
+      m.sprite.material.opacity = Math.sin(Math.min(k, 1) * Math.PI) * 0.9 * vis;
+      if (camera) {
+        _mP1.copy(m.pos).project(camera);
+        _mP2.copy(m.pos).addScaledVector(m.vel, 0.02).project(camera);
+        m.sprite.material.rotation = Math.atan2(_mP2.y - _mP1.y, (_mP2.x - _mP1.x) * camera.aspect);
+      }
+    }
+  }
+
   // moon
   const moon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: moonTexture(),
@@ -263,6 +362,7 @@ export function buildSky(scene, renderer) {
     PAL.cloud.get(elevDeg, _c);
     for (const cl of clouds) cl.sprite.material.color.copy(_c);
     starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg));
+    uniforms.uNightF.value = 1 - sstep(-10, -2, elevDeg);
     moon.position.copy(_moonDir).multiplyScalar(3100);
     moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
 
@@ -283,6 +383,7 @@ export function buildSky(scene, renderer) {
       c.sprite.position.x += c.speed * dt;
       if (c.sprite.position.x > 1700) c.sprite.position.x = -1700;
     }
+    updateMeteors(dt);
     apply(t);
   }
 
@@ -293,5 +394,6 @@ export function buildSky(scene, renderer) {
     setTod(v) { tod = ((v % 1) + 1) % 1; },
     getTod: () => tod,
     warp(s) { tod = (tod + s / DAY_CYCLE_SECONDS) % 1; },
+    meteor: (dur, azHint) => spawnMeteor(dur, azHint), // debug: force one now
   };
 }

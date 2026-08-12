@@ -143,6 +143,7 @@ uniform vec3 uSkyZenith;
 uniform vec3 uSkyHorizon;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
+uniform float uNightF;
 uniform int uDebug;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
@@ -261,8 +262,16 @@ void main() {
   vec3 col = mix(body, refl, fresnel) + uSunColor * spec;
   col = mix(col, foamCol, foam * 0.92);
 
+  // bioluminescent plankton: churned water glows electric blue-green at night.
+  // Agitation ~ how hard the water is breaking, so the bore front blazes,
+  // rolling fronts trace arcs and whitecaps twinkle far out.
+  float agit = clamp(edgeFoam * 0.7 + frontFoam + boreFoam * 1.5 + cap * 2.2, 0.0, 1.15);
+  col += vec3(0.10, 1.45, 1.20) * pow(agit, 1.5)
+    * (0.30 + 0.70 * smoothstep(0.35, 0.85, m)) * uNightF;
+
   float alpha = clamp(0.16 + absorb * 0.9 + fresnel * 0.8, 0.0, 1.0);
   alpha = max(alpha, foam * 0.95);
+  alpha = max(alpha, min(agit, 1.0) * uNightF * 0.85);
   // ragged, noise-broken feather at the exact waterline
   alpha *= smoothstep(0.0, 0.035 + mottle * 0.05, depth);
 
@@ -308,6 +317,7 @@ export function buildOcean(heightTex) {
       uSkyHorizon: { value: new THREE.Color(0.42, 0.60, 0.82) },
       uFogColor: uniforms.uFogColor,
       uFogDensity: uniforms.uFogDensity,
+      uNightF: uniforms.uNightF,
     },
   });
 

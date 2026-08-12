@@ -114,6 +114,7 @@ export function buildTerrain() {
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
     shader.uniforms.uSunI = uniforms.uSunI;
+    shader.uniforms.uNightF = uniforms.uNightF;
     shader.uniforms.uCaustic = { value: caustics };
     shader.uniforms.uBreakup = { value: breakup };
     Object.assign(shader.uniforms, swashUniforms);
@@ -129,6 +130,7 @@ export function buildTerrain() {
     shader.fragmentShader = `
       uniform float uTime;
       uniform float uSunI;
+      uniform float uNightF;
       uniform sampler2D uCaustic;
       uniform sampler2D uBreakup;
       uniform vec4 uZone1;
@@ -169,12 +171,17 @@ export function buildTerrain() {
           diffuseColor.rgb *= mix(vec3(1.0), vec3(0.44, 0.415, 0.39), wet);
 
           // fizzing foam residue left just behind a retreating wave
+          float fpB = texture2D(uBreakup, vWPos.xz * 0.55).r;
           float resid = exp(-since / 2.4) * (1.0 - step(hEff, 0.02));
           if (resid > 0.01) {
-            float fp = texture2D(uBreakup, vWPos.xz * 0.55).r;
             diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.91, 0.94, 0.93),
-              smoothstep(0.55, 0.85, fp) * resid * 0.55);
+              smoothstep(0.55, 0.85, fpB) * resid * 0.55);
           }
+          // bioluminescent film: a glowing strip chasing the retreating swash
+          // (rises just after a spot is uncovered, gone ~2s later)
+          vBio = smoothstep(0.03, 0.35, since) * exp(-since / 1.1)
+            * (1.0 - step(hEff, 0.01))
+            * (0.25 + 0.75 * smoothstep(0.45, 0.85, fpB));
 
           // underwater absorption tint
           float sub = max(0.0, -vWPos.y);
@@ -206,16 +213,18 @@ export function buildTerrain() {
           float g = bhash(cell + floor(vdir.xy * 7.0));
           float glint = smoothstep(0.9975, 1.0, g);
           totalEmissiveRadiance += vec3(1.0, 0.98, 0.9) * glint * (0.22 + vWetness * 0.5) * uSunI;
+          // night bioluminescence traces the retreating swash line
+          totalEmissiveRadiance += vec3(0.10, 1.55, 1.28) * vBio * uNightF;
         }`
       );
 
-    // declare the wetness bridge variable once, at the top of main()
+    // declare the bridge variables once, at the top of main()
     shader.fragmentShader = shader.fragmentShader.replace(
       'void main() {',
-      'float vWetness = 0.0;\nvoid main() {'
+      'float vWetness = 0.0;\nfloat vBio = 0.0;\nvoid main() {'
     );
   };
-  mat.customProgramCacheKey = () => 'cove-sand-v1';
+  mat.customProgramCacheKey = () => 'cove-sand-v2';
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;

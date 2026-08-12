@@ -26,6 +26,7 @@ export const uniforms = {
   uSunI: { value: 1.0 },
   uWindDir: { value: new THREE.Vector2(0.85, 0.53).normalize() },
   uWindAmp: { value: 1.0 },
+  uNightF: { value: 0 }, // 0 by day → 1 in full night (drives bioluminescence)
   uFogColor: { value: FOG_COLOR.clone() },
   uFogDensity: { value: FOG_DENSITY },
 };
