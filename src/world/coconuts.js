@@ -14,7 +14,10 @@ import { runupNow, runupVel } from './swash.js';
 import { huskTexture } from '../core/textures.js';
 
 const GRAV = 16;
-const N_NUTS = 7;
+// Every coconut lying on the sand is one of these physics nuts — palms.js
+// no longer bakes decorative fallen nuts into the static grove mesh, so
+// anything on the ground takes the kick.
+const N_NUTS = 12;
 
 export function buildCoconuts(player, trees, audio) {
   const group = new THREE.Group();

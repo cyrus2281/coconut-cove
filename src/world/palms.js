@@ -378,15 +378,9 @@ export function buildPalms() {
     });
   }
 
-  // fallen coconuts near the groves
-  for (let i = 0; i < 6; i++) {
-    const t = trees[Math.floor(rand() * trees.length)];
-    const a = rand() * Math.PI * 2, dd = 1 + rand() * 3.5;
-    const c = new THREE.Vector3(t.base.x + Math.cos(a) * dd, 0, t.base.z + Math.sin(a) * dd);
-    c.y = islandHeight(c.x, c.z) + 0.09;
-    const tint = rand() < 0.3 ? [0.55, 0.58, 0.3] : [0.62, 0.5, 0.3];
-    addCoconut(husk, c, 0.13 + rand() * 0.03, tint, 0, 0, rand);
-  }
+  // (No baked fallen coconuts here: every nut on the ground is a live
+  // physics nut from coconuts.js, so they're all kickable. Only the
+  // clusters up in the crowns stay merged into the static husk mesh.)
 
   const barkMat = windify(new THREE.MeshStandardMaterial({
     map: barkTexture(), roughness: 0.92, bumpMap: barkTexture(), bumpScale: 0.35,
