@@ -3,7 +3,10 @@
 import * as THREE from 'three';
 import { uniforms, FOG_COLOR } from './core/env.js';
 import { applyAnisotropy } from './core/textures.js';
-import { getSeed, setSeed, randomSeed, subSeed, DEFAULT_SEED, SEED_FROM_URL, RANDOM_PREF_KEY } from './core/seed.js';
+import {
+  getSeed, setSeed, randomSeed, subSeed,
+  DEFAULT_SEED, SEED_FROM_URL, readRandomPref, writeRandomPref,
+} from './core/seed.js';
 import { mulberry32 } from './core/rng.js';
 import { buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland } from './world/island.js';
 import { reseedSwash } from './world/swash.js';
@@ -158,15 +161,10 @@ if (SEED_FROM_URL) {
 } else {
   // sticky preference: while on, every page load rolls a fresh island
   // (new shoreline, new hour, new weather)
-  seedToggle.checked = localStorage.getItem(RANDOM_PREF_KEY) === '1';
+  seedToggle.checked = readRandomPref();
   seedToggle.addEventListener('change', () => {
-    if (seedToggle.checked) {
-      localStorage.setItem(RANDOM_PREF_KEY, '1');
-      setSeed(randomSeed());
-    } else {
-      localStorage.removeItem(RANDOM_PREF_KEY);
-      setSeed(DEFAULT_SEED);
-    }
+    writeRandomPref(seedToggle.checked);
+    setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
     rebuildWorld();
   });
 }
