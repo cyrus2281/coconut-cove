@@ -11,7 +11,7 @@ module is written seed-ready along the way).
   - [x] Shooting stars: pooled additive streak sprites, random spawns at night (`__beach.sky.meteor(dur, az)` to force one)
   - [x] Distant sailboat: procedural sloop circling at ~640 m, bob + heel, masthead light after dark
 - [x] **Phase 2 — Tides**: semidiurnal `uTide` (A=0.45 m, two cycles per 12-min day, `tideFromTod`); ocean lift, tide-aware depth terms, swash heights relative to the live waterline, `sw_tideSince` falling-tide damp apron (dries ~3× slower than swash), player wade/prints + crab band follow the tide; `__beach.tide()`
-- [ ] **Phase 3 — Offshore sandbar islet**: second cay in `islandHeight` (~85 m out, peak +0.35 m), heightmap rebake, shell/driftwood scatter; wadeable at low tide only (emergent)
+- [x] **Phase 3 — Offshore sandbar islet**: cay at az 0.95, ~38 m past the shoreline (crown ≈ +0.25 m, smooth-max dome); a tenth of all shell/pebble scatter washes up on it; verified wadeable at low tide (crossed to r=99), cut off at high (blocked at r=55)
 - [ ] **Phase 4 — Wave push physics**: analytic swash velocity (d/dt of run-up) shoves the player up-beach on the bore, drags seaward on the backwash, scaled by submersion
 - [ ] **Phase 5 — Beach life**
   - [ ] Crab footprint trails: footprint atlas + per-instance kind (human/crab/turtle), crabs stamp tiny tracks

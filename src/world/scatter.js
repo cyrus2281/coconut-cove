@@ -5,20 +5,31 @@
 
 import * as THREE from 'three';
 import { mulberry32, Simplex2 } from '../core/rng.js';
-import { islandHeight, islandNormal, shoreRadius } from './island.js';
+import { islandHeight, islandNormal, shoreRadius, cayCenter } from './island.js';
 import { shellTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
 
 const scatterNoise = new Simplex2(909);
 
-// Find a point whose terrain height falls in [hMin, hMax].
+// Find a point whose terrain height falls in [hMin, hMax]. A tenth of
+// everything washes up on the offshore cay instead of the main shoreline.
 function shorePoint(rand, hMin, hMax, rMin = -12, rMax = 8) {
   for (let i = 0; i < 60; i++) {
-    const az = rand() * Math.PI * 2;
-    const r = shoreRadius(az) + rMin + rand() * (rMax - rMin);
-    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    let x, z;
+    if (rand() < 0.1) {
+      const c = cayCenter();
+      const a = rand() * Math.PI * 2;
+      const rr = Math.sqrt(rand()) * 8.5;
+      x = c.x + Math.cos(a) * rr;
+      z = c.z + Math.sin(a) * rr;
+    } else {
+      const az = rand() * Math.PI * 2;
+      const r = shoreRadius(az) + rMin + rand() * (rMax - rMin);
+      x = Math.cos(az) * r;
+      z = Math.sin(az) * r;
+    }
     const h = islandHeight(x, z);
-    if (h >= hMin && h <= hMax) return { x, z, h, az };
+    if (h >= hMin && h <= hMax) return { x, z, h, az: Math.atan2(z, x) };
   }
   return null;
 }

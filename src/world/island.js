@@ -19,6 +19,22 @@ export function shoreRadius(theta) {
     + 0.05 * Math.sin(5 * theta + 2.9));
 }
 
+// Offshore sandbar cay: a bare dome ~38m past the shoreline. Its crown pokes
+// ~0.38m above mean sea level, so the low tide bares a walkable islet and the
+// high tide drowns it back to a shimmer of shallows.
+export const CAY_AZ = 0.95;
+const CAY_POS = (() => {
+  const r = shoreRadius(CAY_AZ) + 38;
+  return { x: Math.cos(CAY_AZ) * r, z: Math.sin(CAY_AZ) * r };
+})();
+export function cayCenter() { return { ...CAY_POS }; }
+
+// polynomial smooth-max (mirror of the usual smin)
+function smax(a, b, k) {
+  const t = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
+  return a * (1 - t) + b * t + k * t * (1 - t);
+}
+
 // World-space terrain height (y) at (x, z). Water level is y = 0.
 export function islandHeight(x, z) {
   const r = Math.hypot(x, z);
@@ -40,6 +56,13 @@ export function islandHeight(x, z) {
     h = -(shelf + drop);
     // subtle offshore sand bars
     h += Math.exp(-((d - 13) ** 2) / 90) * 0.28 * Math.sin(d * 0.7 + theta * 3.0);
+  }
+
+  // the sandbar cay rises smoothly out of the shelf
+  const dc = Math.hypot(x - CAY_POS.x, z - CAY_POS.z);
+  if (dc < 26) {
+    const p = 0.38 - 3.0 * (dc / 20) * (dc / 20);
+    h = smax(h, p, 0.5);
   }
 
   // fine surface detail everywhere (fades in deep water)
