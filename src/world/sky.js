@@ -388,9 +388,17 @@ export function buildSky(scene, renderer, camera) {
     moon.position.copy(_moonDir).multiplyScalar(3100);
     moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
 
-    // throttled ambient rebake (storm shifts count as sky changes too)
-    if (t - lastBakeT > 1.5 &&
-        (Math.abs(elevDeg - lastBakeElev) > 0.8 || Math.abs(storm - lastBakeStorm) > 0.2)) {
+    // throttled ambient rebake (storm shifts count as sky changes too).
+    // The steps must stay tiny: each bake swaps scene.environment in one
+    // frame, and at 0.8° per step that ambient pop was visible every ~2s
+    // (it read as the shadows on the sand flickering). Elevation can only
+    // drift ~0.12° between bakes in normal play, so a big accumulated jump
+    // means the clock was set (setTod/reseed) — bake that same frame, while
+    // the whole scene is changing anyway, instead of snapping 0.25s later.
+    const elevJump = Math.abs(elevDeg - lastBakeElev);
+    if (elevJump > 5 ||
+        (t - lastBakeT > 0.25 &&
+         (elevJump > 0.12 || Math.abs(storm - lastBakeStorm) > 0.05))) {
       bakeEnv(_sunDir);
       lastBakeT = t;
       lastBakeElev = elevDeg;
