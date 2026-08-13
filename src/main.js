@@ -4,9 +4,7 @@ import * as THREE from 'three';
 import { uniforms, FOG_COLOR } from './core/env.js';
 import { applyAnisotropy } from './core/textures.js';
 import {
-  getSeed, setSeed, randomSeed, subSeed,
-  DEFAULT_SEED, readRandomPref, writeRandomPref,
-  writeSeedParam, clearSeedParam,
+  getSeed, setSeed, randomSeed, subSeed, DEFAULT_SEED, writeSeedParam,
 } from './core/seed.js';
 import { mulberry32 } from './core/rng.js';
 import {
@@ -199,11 +197,6 @@ applySeedMood(); // the seed picks the arrival hour + sky
 // ---- UI ----
 const touchUI = buildTouchUI(player);
 
-// island seed controls. Two intents, kept from colliding by who owns the URL:
-//   ⟳ new island  — roll one now and pin it in ?seed= (shareable, survives F5)
-//   random toggle  — sticky "roll a fresh island every load", so it drops the
-//                    ?seed= param (a pinned seed would otherwise win at boot)
-const seedToggle = document.getElementById('seedToggle');
 const seedTag = document.getElementById('seedTag');
 const regenBtn = document.getElementById('regen');
 function updateSeedTag() {
@@ -211,16 +204,9 @@ function updateSeedTag() {
 }
 updateSeedTag();
 
-seedToggle.checked = readRandomPref();
-seedToggle.addEventListener('change', () => {
-  writeRandomPref(seedToggle.checked);
-  clearSeedParam();
-  setSeed(seedToggle.checked ? randomSeed() : DEFAULT_SEED);
-  rebuildWorld();
-});
-
-// ⟳ / R lives in the world, not on the title screen (which has its own
-// seed controls), so it only appears once you've walked out onto the beach
+// ⟳ / R rolls a fresh island and pins it in ?seed= (shareable, survives F5).
+// It lives in the world, not on the title screen, so it only appears once
+// you've walked out onto the beach
 function regenerateIsland() {
   regenBtn.blur(); // drop focus, or the next Space (jump) re-triggers the button
   regenBtn.classList.remove('spun');

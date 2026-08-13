@@ -3,40 +3,22 @@
 // homes) derives its own sub-seed from the master via subSeed('name'), so a
 // given seed always regrows the exact same island.
 //
-// Resolution order: ?seed=N in the URL wins; otherwise the default island.
-// The title screen offers a "random island" toggle that reseeds live.
+// Resolution order: ?seed=N in the URL wins; otherwise the curated default
+// island. Fresh islands come from the ⟳ new-island button (R), which pins
+// each roll into ?seed= so it stays shareable.
 
 export const DEFAULT_SEED = 2281;
-export const RANDOM_PREF_KEY = 'cove-random-seed';
 
-// storage can be blocked (private windows, strict privacy settings) — the
-// toggle then still works for the visit, it just won't stick
-export function readRandomPref() {
-  try {
-    return window.localStorage.getItem(RANDOM_PREF_KEY) === '1';
-  } catch (_) {
-    return false;
-  }
-}
-
-export function writeRandomPref(on) {
-  try {
-    if (on) window.localStorage.setItem(RANDOM_PREF_KEY, '1');
-    else window.localStorage.removeItem(RANDOM_PREF_KEY);
-  } catch (_) { /* not persistable — fine */ }
-}
+// a retired "random island every load" toggle once persisted here — sweep
+// the stale key from returning visitors (this cleanup can go away someday)
+try { window.localStorage.removeItem('cove-random-seed'); } catch (_) { /* blocked storage — fine */ }
 
 const params = new URLSearchParams(window.location.search);
-export const SEED_FROM_URL = params.has('seed');
 
-// ?seed=N wins; otherwise the sticky "random island" preference rolls a
-// fresh seed on every page load; otherwise the curated default island.
 let master = DEFAULT_SEED;
-if (SEED_FROM_URL) {
+if (params.has('seed')) {
   const n = parseInt(params.get('seed'), 10);
   if (Number.isFinite(n)) master = n >>> 0;
-} else if (readRandomPref()) {
-  master = randomSeed();
 }
 
 export function getSeed() {
@@ -52,17 +34,10 @@ export function randomSeed() {
 }
 
 // Show the live seed in the address bar (replaceState: no history spam), so
-// the island you are standing on is always a copy-pasteable link. Clearing
-// the param hands the next page load back to the random-island preference.
+// the island you are standing on is always a copy-pasteable link.
 export function writeSeedParam(s) {
   const url = new URL(window.location.href);
   url.searchParams.set('seed', String(s >>> 0));
-  window.history.replaceState(null, '', url);
-}
-
-export function clearSeedParam() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('seed');
   window.history.replaceState(null, '', url);
 }
 
