@@ -12,94 +12,22 @@ import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, lagoonFreeboard } from './island.js';
-import { butterflyWingTexture } from '../core/textures.js';
+import { buildButterflyWings, BUTTERFLY_TINTS } from '../creatures/butterfly.js';
 
 const COUNT = 6; // a few is plenty — a swarm reads as gnats, not butterflies
-const SPAN = 0.055; // one wing, metres
 
 export function buildButterflies(player) {
   const group = new THREE.Group();
   group.name = 'butterflies';
   const rand = mulberry32(subSeed('butterflies'));
 
-  // ---- wing-pair geometry: two trapezoid quads meeting in the middle ----
-  const pos = [], uv = [], idx = [];
-  const wing = (side) => {
-    const base = pos.length / 3;
-    // centerline front, tip front, tip back, centerline back — both wings
-    // share the x=0 hinge, so their painted roots meet with no gap
-    const pts = [
-      [0, 0, -0.030],
-      [SPAN * side, 0.004, -0.048],
-      [SPAN * side, 0.004, 0.028],
-      [0, 0, 0.034],
-    ];
-    for (const p of pts) pos.push(...p);
-    uv.push(0, 0, 1, 0, 1, 1, 0, 1);
-    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
-  };
-  wing(1); wing(-1);
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-
-  // per-instance flap phase + rate jitter + rest-fold (eased on the CPU)
-  const phases = new Float32Array(COUNT), rates = new Float32Array(COUNT);
-  const rests = new Float32Array(COUNT);
-  for (let i = 0; i < COUNT; i++) { phases[i] = rand() * Math.PI * 2; rates[i] = rand() * 5; }
-  geo.setAttribute('aPhase', new THREE.InstancedBufferAttribute(phases, 1));
-  geo.setAttribute('aRate', new THREE.InstancedBufferAttribute(rates, 1));
-  const restAttr = new THREE.InstancedBufferAttribute(rests, 1);
-  restAttr.setUsage(THREE.DynamicDrawUsage);
-  geo.setAttribute('aRest', restAttr);
-
-  const mat = new THREE.MeshBasicMaterial({
-    map: butterflyWingTexture(),
-    side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 0.08,   // clip the scalloped edge out of the quad
-    depthWrite: false, // so the clear corners never punch holes in water
-    opacity: 1,
-  });
-  const flapUniform = { value: 1 }; // 1 flying, ~0 settled (dusk / squall)
-  mat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = uniforms.uTime;
-    shader.uniforms.uFlapAmp = flapUniform;
-    shader.vertexShader = `
-      uniform float uTime;
-      uniform float uFlapAmp;
-      attribute float aPhase;
-      attribute float aRate;
-      attribute float aRest;
-    ` + shader.vertexShader.replace(
-      '#include <begin_vertex>',
-      `#include <begin_vertex>
-      {
-        // two continuous oscillators blended by aRest: full flight flap,
-        // and the folded-wings-up pose with a slow fan while perched
-        float fly = sin(uTime * (11.0 + aRate) + aPhase) * (0.05 + 0.95 * uFlapAmp) + 0.12;
-        float perch = 1.22 + sin(uTime * 2.1 + aPhase) * 0.26;
-        float flap = mix(fly, perch, aRest);
-        transformed.y += abs(transformed.x) * sin(flap);
-        transformed.x *= cos(flap);
-      }`
-    );
-  };
-  mat.customProgramCacheKey = () => 'butterfly-v3';
+  const { geo, mat, rests, restAttr, flapUniform } = buildButterflyWings(COUNT, rand);
 
   const mesh = new THREE.InstancedMesh(geo, mat, COUNT);
   mesh.frustumCulled = false;
   group.add(mesh);
 
-  // wing tints: sulphur yellows, oranges, a morpho blue — nothing white,
-  // white vanishes against the sand
-  const tints = [
-    [1.0, 0.88, 0.30], [1.0, 0.62, 0.16], [0.45, 0.66, 1.0],
-    [1.0, 0.94, 0.55], [0.95, 0.45, 0.28],
-  ];
+  const tints = BUTTERFLY_TINTS;
 
   // ---- the flies ----
   const flies = [];

@@ -131,6 +131,17 @@ Everything is generated at startup from seeded noise — geometry, textures
   homes. Same seed, same island, every time — and the ⟳ / `R` button pins
   each new island's seed in the URL so you can share it.
 
+## Creature viewer
+
+Open <http://localhost:5173/components> for a debug gallery of every animal
+in isolation — gull, ghost crab, turtles, butterflies, all the reef fish,
+the shark, the ray, the moon jelly and the moray — each on a lit stage with
+its poses on buttons (fly / fold / crawl / dig / burst…), beach and
+underwater lighting, night mode, turntable, wireframe, a reroll for seeded
+variation, and live triangle/fps stats. Handy for judging looks without
+walking the island. (`window.__viewer` offers `load(id)`, `pose(id)` and
+`orbit(azimuth, polar, dist)` for scripted screenshots.)
+
 ## Debug console
 
 `window.__beach` exposes helpers in DevTools:

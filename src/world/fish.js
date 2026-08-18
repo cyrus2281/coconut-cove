@@ -5,25 +5,12 @@
 // school once the coast is clear. One InstancedMesh per school.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
-
-function fishGeometry() {
-  const body = new THREE.SphereGeometry(1, 10, 7);
-  body.scale(0.075, 0.021, 0.012);
-  const tail = new THREE.BufferGeometry();
-  // flat caudal fin: two triangles fanning back from the peduncle
-  tail.setAttribute('position', new THREE.Float32BufferAttribute([
-    -0.070, 0, 0, -0.104, 0.020, 0, -0.096, 0.004, 0,
-    -0.070, 0, 0, -0.096, -0.004, 0, -0.104, -0.020, 0,
-  ], 3));
-  tail.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(12), 2));
-  tail.computeVertexNormals();
-  return mergeGeometries([body.toNonIndexed(), tail]);
-}
+import { silversideAsset } from '../creatures/shorefish.js';
+import { wigAttribute } from '../creatures/fishcraft.js';
 
 // school homes are grown from the island seed inside buildFish
 
@@ -38,19 +25,16 @@ export function buildFish(player) {
     { az: azA + 2 + seedRand() * 2, count: 18 + Math.floor(seedRand() * 5), depth: 1.2, seed: subSeed('schoolB') },
   ];
 
-  const geo = fishGeometry();
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x46606b, // dark dorsal slate — schools read as silhouettes from shore
-    metalness: 0.35,
-    roughness: 0.5,
-  });
+  const asset = silversideAsset();
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
     e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
 
   const schools = SCHOOLS.map((def) => {
     const rand = mulberry32(def.seed);
-    const inst = new THREE.InstancedMesh(geo, mat, def.count);
+    // per-school geometry clone so each carries its own swim-phase attribute
+    const geo = wigAttribute(asset.geo.clone(), def.count, rand);
+    const inst = new THREE.InstancedMesh(geo, asset.mat, def.count);
     inst.frustumCulled = false;
     group.add(inst);
     const fish = [];
@@ -142,7 +126,8 @@ export function buildFish(player) {
         }
         f.px = fx; f.pz = fz;
 
-        e.set(0, f.yaw + Math.sin(t * 9 + i * 1.7) * 0.22, 0);
+        // the tail swims in the shader now; keep only a whisper of body yaw
+        e.set(0, f.yaw + Math.sin(t * 9 + i * 1.7) * 0.05, 0);
         q.setFromEuler(e);
         v.set(fx, fy, fz);
         sc.setScalar(f.size);

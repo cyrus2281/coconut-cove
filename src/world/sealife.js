@@ -3,19 +3,22 @@
 // their anemones, a shimmering fusilier bait ball, patrolling blacktip reef
 // sharks, stingrays gliding over the seagrass, cruising green sea turtles
 // that rise to breathe, moon jellies pulsing near the surface, and a moray
-// eel leaning out of its den. Bodies come from fishcraft.js; the big
-// characters (ray, turtle, jelly, eel) are built here.
+// eel leaning out of its den. This file is the brains only — every body
+// is built in src/creatures/ (species.js, ray.js, turtle.js, jelly.js,
+// eel.js, shark.js) and can be inspected alone on the /components page.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
-import {
-  fishGeometry, fishTexture, tintFinStrip, fishMaterial, wigAttribute,
-} from './fishcraft.js';
-import { uwPatch, uwAttach, UW_WPOS_VERT, UW_FRAG_DECL, UW_CAUSTIC_FRAG } from './underwater.js';
+import { wigAttribute } from '../creatures/fishcraft.js';
+import { speciesLibrary } from '../creatures/species.js';
+import { rayGeometry, rayMaterial } from '../creatures/ray.js';
+import { jellyGeometry, jellyMaterial } from '../creatures/jelly.js';
+import { buildEel } from '../creatures/eel.js';
+import { buildShark } from '../creatures/shark.js';
+import { buildSwimTurtleMesh } from '../creatures/turtle.js';
 
 const _m = new THREE.Matrix4(), _v = new THREE.Vector3(), _s = new THREE.Vector3(),
   _q = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _qr = new THREE.Quaternion(),
@@ -36,194 +39,20 @@ function composeFish(inst, i, x, y, z, yaw, pitch, roll, size) {
   inst.setMatrixAt(i, _m);
 }
 
-// ------------------------------------------------------------ species art
-function speciesLibrary() {
-  const mk = (name, geoOpts, painter, texOpts, matOpts = {}) => {
-    const geo = fishGeometry(geoOpts);
-    const tex = fishTexture(painter, texOpts);
-    if (texOpts && texOpts.finTint) {
-      tintFinStrip(tex, texOpts.finTint);
-    }
-    const mat = fishMaterial({ map: tex, name, len: geoOpts.len, ...matOpts });
-    return { geo, mat, len: geoOpts.len };
-  };
-
-  return {
-    sergeant: mk('sergeant',
-      { len: 0.17, height: 0.088, width: 0.03, blunt: 0.75, caudal: { type: 'fork', l: 0.3, h: 0.55 } },
-      (h) => {
-        h.base([[0, '#dfe6e2'], [0.45, '#cfd8c8'], [0.8, '#e8d44a'], [1, '#d4b83a']]);
-        for (let i = 0; i < 5; i++) h.bar(0.17 + i * 0.14, 0.05, 'rgba(16,20,24,0.92)', 0.15);
-        h.eye(); h.gill();
-      },
-      { finColor: '#e6e0b8' }),
-
-    fusilier: mk('fusilier',
-      {
-        len: 0.1, height: 0.024, width: 0.015, peak: 0.45, blunt: 0.85,
-        slices: 10, ring: 8,
-        caudal: { type: 'fork', l: 0.3, h: 1.4 }, dorsal: null, anal: null, pect: null,
-      },
-      (h) => {
-        h.base([[0, '#e8eef2'], [0.55, '#b9c8d4'], [1, '#5a7fa8']]);
-        h.stripe(0.62, 0.16, 'rgba(240,210,80,0.85)');
-        h.eye(0.09, 0.6, 0.16);
-      },
-      { W: 128, H: 64, finColor: '#f0dc8c' }, { metal: 0.55, rough: 0.35, freq: 9 }),
-
-    blueTang: mk('blueTang',
-      {
-        len: 0.26, height: 0.14, width: 0.035, peak: 0.45, blunt: 0.85,
-        caudal: { type: 'truncate', l: 0.22, h: 0.5 },
-        dorsal: { h: 0.34, u0: 0.18, u1: 0.8 }, anal: { h: 0.34, u0: 0.3, u1: 0.8 },
-      },
-      (h) => {
-        h.base([[0, '#2a5fd8'], [0.6, '#1b4cc4'], [1, '#0e2f96']]);
-        // the "palette" swoosh: a dark sweep from the eye back to the tail
-        h.ctx.fillStyle = 'rgba(8,12,40,0.9)';
-        h.ctx.beginPath();
-        h.ctx.ellipse(h.W * 0.45, h.H * 0.78, h.W * 0.34, h.H * 0.17, -0.06, 0, Math.PI * 2);
-        h.ctx.fill();
-        h.ctx.fillStyle = '#1b4cc4';
-        h.ctx.beginPath();
-        h.ctx.ellipse(h.W * 0.4, h.H * 0.74, h.W * 0.25, h.H * 0.09, -0.06, 0, Math.PI * 2);
-        h.ctx.fill();
-        h.bar(0.9, 0.2, 'rgba(244,214,26,0.95)'); // yellow caudal wedge
-        h.eye(0.07, 0.66); h.gill();
-      },
-      { finColor: '#f4d61a', rayColor: 'rgba(80,60,0,0.3)' }),
-
-    yellowTang: mk('yellowTang',
-      {
-        len: 0.19, height: 0.125, width: 0.028, peak: 0.42, blunt: 0.9,
-        caudal: { type: 'truncate', l: 0.2, h: 0.42 },
-        dorsal: { h: 0.5, u0: 0.2, u1: 0.78 }, anal: { h: 0.42, u0: 0.34, u1: 0.78 },
-      },
-      (h) => {
-        h.base([[0, '#f6d90e'], [0.7, '#f2ce0c'], [1, '#e8ba14']]);
-        h.stripe(0.55, 0.05, 'rgba(255,246,200,0.5)'); // pale lateral streak
-        h.ctx.fillStyle = 'rgba(214,160,20,0.5)';
-        h.ctx.fillRect(0, 0, h.W * 0.16, h.H); // warm shading at the head
-        h.eye(0.08, 0.64); h.gill(0.18);
-      },
-      { finColor: '#f6d90e', rayColor: 'rgba(150,110,10,0.4)' }),
-
-    butterfly: mk('butterfly',
-      {
-        len: 0.15, height: 0.088, width: 0.024, blunt: 0.8,
-        caudal: { type: 'truncate', l: 0.22, h: 0.42 },
-        dorsal: { h: 0.4, u0: 0.24, u1: 0.78 }, anal: { h: 0.34, u0: 0.4, u1: 0.78 },
-      },
-      (h) => {
-        h.base([[0, '#f4f2e8'], [0.55, '#f0ead2'], [1, '#f2d258']]);
-        h.bar(0.075, 0.075, 'rgba(14,16,20,0.95)'); // eye-band
-        for (let i = 0; i < 7; i++) {
-          h.bar(0.2 + i * 0.09, 0.014, 'rgba(120,110,70,0.35)');
-        }
-        h.spot(0.74, 0.82, 0.16, 'rgba(250,248,240,0.95)'); // false eyespot
-        h.spot(0.74, 0.82, 0.11, '#101216');
-        h.eye(0.075, 0.62, 0.07);
-      },
-      { finColor: '#f2d258', rayColor: 'rgba(60,50,10,0.35)' }),
-
-    angelfish: mk('angelfish',
-      {
-        len: 0.3, height: 0.16, width: 0.045, peak: 0.44, blunt: 0.8,
-        caudal: { type: 'truncate', l: 0.2, h: 0.44 },
-        dorsal: { h: 0.32, u0: 0.2, u1: 0.82 }, anal: { h: 0.32, u0: 0.34, u1: 0.82 },
-      },
-      (h) => {
-        h.base([[0, '#152a6e'], [1, '#0e1e52']]);
-        // the emperor's yellow pinstripes, rising slightly toward the tail
-        h.ctx.strokeStyle = 'rgba(240,200,40,0.95)';
-        h.ctx.lineWidth = 3;
-        for (let i = 0; i < 9; i++) {
-          const y = h.H * (0.12 + i * 0.1);
-          h.ctx.beginPath();
-          h.ctx.moveTo(h.W * 0.14, y);
-          h.ctx.lineTo(h.W * 0.9, y + h.H * 0.06);
-          h.ctx.stroke();
-        }
-        h.bar(0.93, 0.14, 'rgba(244,206,30,0.95)');
-        h.bar(0.1, 0.1, 'rgba(10,14,30,0.95)'); // eye mask
-        h.bar(0.17, 0.035, 'rgba(220,230,240,0.8)');
-        h.eye(0.08, 0.6, 0.075);
-      },
-      { finColor: '#f0c828', rayColor: 'rgba(90,60,0,0.35)' }),
-
-    parrotfish: mk('parrotfish',
-      {
-        len: 0.44, height: 0.15, width: 0.07, peak: 0.4, blunt: 0.62,
-        caudal: { type: 'truncate', l: 0.2, h: 0.5 },
-        dorsal: { h: 0.22, u0: 0.18, u1: 0.8 }, anal: { h: 0.2, u0: 0.36, u1: 0.8 },
-      },
-      (h) => {
-        h.base([[0, '#5fc4a8'], [0.55, '#2ba088'], [1, '#1a7f86']]);
-        // scale mottle: rows of overlapping arcs
-        const rand = mulberry32(5150);
-        for (let i = 0; i < 240; i++) {
-          const x = rand() * h.W, y = rand() * h.H;
-          h.ctx.strokeStyle = rand() < 0.6
-            ? 'rgba(20,110,120,0.35)' : 'rgba(240,150,170,0.28)';
-          h.ctx.lineWidth = 1.6;
-          h.ctx.beginPath();
-          h.ctx.arc(x, y, 4 + rand() * 4, 0.2, Math.PI - 0.2);
-          h.ctx.stroke();
-        }
-        h.ctx.fillStyle = 'rgba(238,170,190,0.5)'; // pink cheek wash
-        h.ctx.fillRect(0, 0, h.W * 0.2, h.H * 0.6);
-        h.ctx.fillStyle = '#dfe8e2'; // the beak
-        h.ctx.fillRect(0, h.H * 0.35, h.W * 0.045, h.H * 0.3);
-        h.eye(0.09, 0.68, 0.06); h.gill(0.2);
-      },
-      { finColor: '#37b09a', rayColor: 'rgba(240,150,170,0.5)' }),
-
-    shark: mk('shark',
-      {
-        len: 1.7, height: 0.36, width: 0.27, peak: 0.34, blunt: 0.55, peduncle: 0.05,
-        slices: 26, ring: 16,
-        caudal: { type: 'lunate', l: 0.22, h: 0.8 },
-        dorsal: { h: 0.85, u0: 0.34, u1: 0.52, sweep: true },
-        anal: { h: 0.28, u0: 0.62, u1: 0.72 },
-        pect: { l: 0.28, h: 0.85 },
-      },
-      (h) => {
-        // countershading: white belly, bronze-gray back, crisp mid-line
-        h.base([[0, '#e8e9e4'], [0.34, '#dcddd6'], [0.42, '#9aa4a8'], [0.75, '#6a767e'], [1, '#525d66']]);
-        h.stripe(0.38, 0.03, 'rgba(70,80,86,0.35)');
-        const rand = mulberry32(441);
-        for (let i = 0; i < 120; i++) { // faint dermal speckle
-          h.ctx.fillStyle = `rgba(255,255,255,${0.03 + rand() * 0.05})`;
-          h.ctx.fillRect(rand() * h.W, h.H * (0.4 + rand() * 0.6), 2, 2);
-        }
-        h.eye(0.055, 0.66, 0.045);
-        // gill slits
-        h.ctx.strokeStyle = 'rgba(40,48,54,0.6)';
-        h.ctx.lineWidth = 2;
-        for (let i = 0; i < 5; i++) {
-          const x = h.W * (0.16 + i * 0.022);
-          h.ctx.beginPath();
-          h.ctx.moveTo(x, h.H * 0.42);
-          h.ctx.lineTo(x + h.W * 0.008, h.H * 0.66);
-          h.ctx.stroke();
-        }
-      },
-      {
-        finColor: '#77828a',
-        rayColor: 'rgba(50,58,64,0.25)',
-        // the blacktip's signature: ink-dipped fin tips
-        finTint: (ctx, x, y, w, hh) => {
-          const g = ctx.createLinearGradient(0, 0, 0, hh);
-          g.addColorStop(0, 'rgba(10,12,14,0)');
-          g.addColorStop(0.78, 'rgba(10,12,14,0)');
-          g.addColorStop(0.92, 'rgba(10,12,14,0.9)');
-          g.addColorStop(1, 'rgba(6,8,10,0.95)');
-          ctx.fillStyle = g;
-          ctx.fillRect(x, y, w, hh);
-        },
-      },
-      { rough: 0.55, metal: 0.1, freq: 2.3 }),
-  };
+// the same yaw/pitch/roll order, but onto an object's own transform: for the
+// creatures whose bodies are flexed on the CPU instead of in an instanced
+// vertex shader (the shark)
+function poseCreature(obj, x, y, z, yaw, pitch, roll, size) {
+  _q.setFromAxisAngle(_up, yaw);
+  _qp.setFromAxisAngle(_zAxis, pitch);
+  _q.multiply(_qp);
+  if (roll) {
+    _qr.setFromAxisAngle(_xAxis, roll);
+    _q.multiply(_qr);
+  }
+  obj.position.set(x, y, z);
+  obj.quaternion.copy(_q);
+  obj.scale.setScalar(size);
 }
 
 // ------------------------------------------------------------ school brain
@@ -305,21 +134,9 @@ function makeSchool({
 }
 
 // clownfish never leave their anemone; when the diver looms they tuck in
-function makeClownfish(anemones, rand) {
-  const geo = fishGeometry({
-    len: 0.105, height: 0.055, width: 0.022, blunt: 0.8,
-    caudal: { type: 'round', l: 0.26, h: 0.55 },
-    dorsal: { h: 0.4, u0: 0.26, u1: 0.72 }, anal: { h: 0.3, u0: 0.45, u1: 0.72 },
-  });
-  const tex = fishTexture((h) => {
-    h.base([[0, '#f8892c'], [0.7, '#f07822'], [1, '#d85c14']]);
-    for (const [u, w] of [[0.16, 0.085], [0.47, 0.1], [0.8, 0.07]]) {
-      h.bar(u, w + 0.03, 'rgba(20,16,12,0.9)');
-      h.bar(u, w, '#f4f2ec');
-    }
-    h.eye(0.075, 0.6, 0.09);
-  }, { W: 128, H: 64, finColor: '#f07822', rayColor: 'rgba(30,15,5,0.5)' });
-  const mat = fishMaterial({ map: tex, name: 'clown', len: 0.105, freq: 10 });
+function makeClownfish(lib, anemones, rand) {
+  const geo = lib.clownfish.geo.clone();
+  const mat = lib.clownfish.mat;
   const homes = anemones.slice(0, 6);
   const per = 2;
   const count = homes.length * per;
@@ -450,16 +267,20 @@ function makeBaitBall(lib, rand, sharkPos) {
 }
 
 // --------------------------------------------------------------- sharks
-function makeSharks(lib, rand) {
+// One or two blacktips patrolling the reef band. Their spines flex on the CPU
+// (shark.js) rather than in a vertex shader, which a pair can afford and a
+// school could not, so the flex drops to a quarter rate once they are too far
+// off for the tail beat to read.
+function makeSharks(rand) {
   const n = 1 + (rand() < 0.4 ? 1 : 0);
-  const geo = lib.shark.geo;
-  wigAttribute(geo, n, rand);
-  const inst = new THREE.InstancedMesh(geo, lib.shark.mat, n);
-  inst.frustumCulled = false;
-  inst.name = 'sharks';
+  const group = new THREE.Group();
+  group.name = 'sharks';
   const sharks = [];
   for (let i = 0; i < n; i++) {
+    const rig = buildShark();
+    group.add(rig.group);
     sharks.push({
+      rig,
       az: rand() * Math.PI * 2,
       rOff: 24 + rand() * 12,
       dir: rand() < 0.5 ? 1 : -1,
@@ -468,7 +289,10 @@ function makeSharks(lib, rand) {
       yaw: 0, pitch: 0, roll: 0,
       px: 0, py: -3, pz: 0,
       ox: 0, oz: 0,
-      size: 0.9 + rand() * 0.25,
+      size: 0.98 + rand() * 0.38, // 1.6 to 2.2 m of shark
+      beat: rand(), // tail-beat phase, in cycles
+      rate: 0.9 + rand() * 0.25,
+      frame: 0,
     });
   }
   const pos0 = new THREE.Vector3();
@@ -515,12 +339,18 @@ function makeSharks(lib, rand) {
       // bank into the turn
       s.roll += (THREE.MathUtils.clamp(dYaw * 6, -0.45, 0.45) - s.roll) * Math.min(dt * 2, 1);
       s.px = x; s.py = s.y; s.pz = z;
-      composeFish(inst, i, x, s.y, z, s.yaw, s.pitch, s.roll, s.size);
+      poseCreature(s.rig.group, x, s.y, z, s.yaw, s.pitch, s.roll, s.size);
+
+      // the tail beats at whatever pace it is actually making ground at, so
+      // the shove away from the diver reads as a burst
+      const gait = THREE.MathUtils.clamp(
+        Math.hypot(mvx, mvz) / Math.max(dt, 1e-4) / speed, 0.45, 2.2);
+      s.beat += dt * 0.62 * gait * s.rate;
+      if (pd < 26 || (s.frame++ & 3) === 0) s.rig.update(s.beat, 0.82 + 0.22 * gait);
     }
-    inst.instanceMatrix.needsUpdate = true;
   }
   return {
-    inst, update,
+    group, update,
     pos: (i = 0) => {
       const s = sharks[i];
       return pos0.set(s.px, s.py, s.pz);
@@ -529,136 +359,6 @@ function makeSharks(lib, rand) {
 }
 
 // ----------------------------------------------------------------- rays
-function rayGeometry() {
-  const L = 1.0, S = 1.6;
-  const NX = 18, NZ = 16;
-  const pos = [], uv = [], idx = [];
-  for (let ix = 0; ix <= NX; ix++) {
-    const u = ix / NX;
-    const x = (u - 0.42) * L;
-    const wing = Math.pow(Math.sin(Math.PI * THREE.MathUtils.clamp(u, 0.02, 0.98)), 0.72);
-    for (let iz = 0; iz <= NZ; iz++) {
-      const w = (iz / NZ) * 2 - 1;
-      const z = w * (S / 2) * wing;
-      const dome = 0.105 * Math.pow(1 - Math.abs(w), 1.35)
-        * Math.pow(Math.max(Math.sin(Math.PI * u), 0), 0.7);
-      pos.push(x, dome - Math.pow(Math.abs(w), 3) * 0.015, z);
-      uv.push(0.04 + u * 0.92, iz / NZ);
-    }
-  }
-  const stride = NZ + 1;
-  for (let ix = 0; ix < NX; ix++) {
-    for (let iz = 0; iz < NZ; iz++) {
-      const a = ix * stride + iz, b = a + 1, c = a + stride, d = c + 1;
-      idx.push(a, b, c, b, d, c);
-    }
-  }
-  let disc = new THREE.BufferGeometry();
-  disc.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  disc.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  disc.setIndex(idx);
-  disc.computeVertexNormals();
-
-  // whip tail: a narrow tapering strip trailing off the back
-  const tp = [], tuv = [], tidx = [];
-  const TN = 7;
-  for (let i = 0; i <= TN; i++) {
-    const k = i / TN;
-    const x = -0.42 * L - k * 0.95;
-    const hw = 0.024 * (1 - k * 0.85);
-    tp.push(x, 0.012 - k * 0.03, -hw, x, 0.012 - k * 0.03, hw);
-    tuv.push(0.01, 0.48, 0.01, 0.52);
-  }
-  for (let i = 0; i < TN; i++) {
-    const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-    tidx.push(a, b, c, b, d, c);
-  }
-  const tail = new THREE.BufferGeometry();
-  tail.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
-  tail.setAttribute('uv', new THREE.Float32BufferAttribute(tuv, 2));
-  tail.setIndex(tidx);
-  tail.computeVertexNormals();
-
-  // eye bumps on the crown
-  const eyes = [];
-  for (const m of [1, -1]) {
-    const e = new THREE.SphereGeometry(0.02, 6, 5);
-    e.translate(0.13, 0.075, m * 0.1);
-    eyes.push(e);
-  }
-  const geo = mergeGeometries([disc, tail, ...eyes]);
-  geo.computeBoundingSphere();
-  return geo;
-}
-
-function rayTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const ctx = c.getContext('2d');
-  const rand = mulberry32(662);
-  ctx.fillStyle = '#79704e';
-  ctx.fillRect(0, 0, 256, 256);
-  // reticulated rings and pale freckles
-  for (let i = 0; i < 70; i++) {
-    ctx.strokeStyle = `rgba(52,46,28,${0.25 + rand() * 0.3})`;
-    ctx.lineWidth = 1.6 + rand() * 1.4;
-    ctx.beginPath();
-    ctx.arc(rand() * 256, rand() * 256, 3 + rand() * 9, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-  for (let i = 0; i < 120; i++) {
-    ctx.fillStyle = `rgba(212,200,160,${0.2 + rand() * 0.3})`;
-    ctx.beginPath();
-    ctx.arc(rand() * 256, rand() * 256, 1 + rand() * 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  // pale disc rim (v edges) and a dark tail margin (u ≈ 0)
-  const rim = ctx.createLinearGradient(0, 0, 0, 256);
-  rim.addColorStop(0, 'rgba(214,206,178,0.7)');
-  rim.addColorStop(0.08, 'rgba(214,206,178,0)');
-  rim.addColorStop(0.92, 'rgba(214,206,178,0)');
-  rim.addColorStop(1, 'rgba(214,206,178,0.7)');
-  ctx.fillStyle = rim;
-  ctx.fillRect(0, 0, 256, 256);
-  ctx.fillStyle = '#453f2c';
-  ctx.fillRect(0, 0, 10, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
-
-function rayMaterial() {
-  const mat = new THREE.MeshStandardMaterial({
-    map: rayTexture(), roughness: 0.75, metalness: 0.05, side: THREE.DoubleSide,
-  });
-  mat.onBeforeCompile = (shader) => {
-    uwAttach(shader);
-    shader.vertexShader = `
-      attribute vec3 aWig;
-      uniform float uTime;
-      varying vec3 vWPos;
-    ` + shader.vertexShader
-      .replace('#include <begin_vertex>', `#include <begin_vertex>
-      {
-        float span = min(abs(transformed.z) / 0.8, 1.0);
-        float ph = uTime * 2.1 * aWig.z + aWig.x;
-        // wings ripple root→tip; the tail traces the wake
-        transformed.y += sin(ph - span * 2.8) * pow(span, 1.6) * 0.22 * aWig.y;
-        if (transformed.x < -0.44) {
-          float tk = -(transformed.x + 0.44);
-          transformed.z += sin(ph * 0.9 + tk * 3.0) * 0.07 * tk * aWig.y;
-        }
-      }`)
-      .replace('#include <project_vertex>', `#include <project_vertex>
-      ${UW_WPOS_VERT}`);
-    shader.fragmentShader = UW_FRAG_DECL + shader.fragmentShader
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      ${UW_CAUSTIC_FRAG}`);
-  };
-  mat.customProgramCacheKey = () => 'uw-ray';
-  return mat;
-}
-
 function makeRays(rand, meadows) {
   const n = 2 + (rand() < 0.5 ? 1 : 0);
   const geo = rayGeometry();
@@ -752,118 +452,6 @@ function makeRays(rand, meadows) {
 }
 
 // -------------------------------------------------------------- turtles
-function turtleShellTexture(seed) {
-  const c = document.createElement('canvas');
-  c.width = c.height = 256;
-  const ctx = c.getContext('2d');
-  const rand = mulberry32(seed);
-  ctx.fillStyle = '#31441f';
-  ctx.fillRect(0, 0, 256, 256);
-  const scute = (cx, cy, r) => {
-    const rot = rand() * Math.PI;
-    ctx.beginPath();
-    for (let i = 0; i <= 6; i++) {
-      const a = rot + (i / 6) * Math.PI * 2;
-      const rr = r * (0.88 + rand() * 0.18);
-      const x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 1.1;
-      if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y);
-    }
-    ctx.closePath();
-    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, r);
-    g.addColorStop(0, `rgb(${96 + (rand() * 30) | 0},${112 + (rand() * 26) | 0},${62 + (rand() * 20) | 0})`);
-    g.addColorStop(1, `rgb(${56 + (rand() * 20) | 0},${74 + (rand() * 18) | 0},${40 + (rand() * 14) | 0})`);
-    ctx.fillStyle = g;
-    ctx.fill();
-    ctx.strokeStyle = '#20301a';
-    ctx.lineWidth = 5;
-    ctx.stroke();
-  };
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 5; col++) {
-      scute(24 + col * 52 + (row % 2) * 26 + rand() * 8, 38 + row * 62 + rand() * 8, 28 + rand() * 5);
-    }
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-function buildSwimTurtleMesh(seed) {
-  const g = new THREE.Group();
-  const shellMat = uwPatch(new THREE.MeshStandardMaterial({
-    map: turtleShellTexture(seed), roughness: 0.55,
-  }), 'seaturtle-shell');
-  const skinMat = uwPatch(new THREE.MeshStandardMaterial({
-    color: 0x5f7048, roughness: 0.7,
-  }), 'seaturtle-skin');
-
-  const shell = new THREE.Mesh(new THREE.SphereGeometry(1, 22, 16), shellMat);
-  shell.scale.set(0.5, 0.18, 0.4);
-  shell.position.y = 0.05;
-  g.add(shell);
-  const belly = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), skinMat);
-  belly.scale.set(0.44, 0.11, 0.35);
-  belly.position.y = -0.03;
-  g.add(belly);
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 12, 9), skinMat);
-  head.scale.set(1.3, 0.85, 0.9);
-  head.position.set(0.58, 0.02, 0);
-  g.add(head);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.3 });
-  for (const s of [-1, 1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.019, 6, 5), eyeMat);
-    eye.position.set(0.66, 0.05, 0.075 * s);
-    g.add(eye);
-  }
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.16, 7), skinMat);
-  tail.rotation.z = Math.PI / 2;
-  tail.position.set(-0.52, -0.01, 0);
-  g.add(tail);
-
-  // flippers: the same swept planforms as the nesting turtle on the beach
-  const flipperGeo = (len, wid, rear, m) => {
-    const s = new THREE.Shape();
-    const L = len, W = wid * m;
-    s.moveTo(0.02, -W * 0.30);
-    if (rear) {
-      s.bezierCurveTo(L * 0.35, -W * 0.62, L * 0.85, -W * 0.55, L * 1.0, -W * 0.05);
-      s.bezierCurveTo(L * 0.95, W * 0.42, L * 0.45, W * 0.52, 0.02, W * 0.30);
-    } else {
-      s.bezierCurveTo(L * 0.30, -W * 0.55, L * 0.72, -W * 0.48, L * 1.0, -W * 0.10);
-      s.bezierCurveTo(L * 0.88, W * 0.18, L * 0.60, W * 0.36, L * 0.30, W * 0.44);
-      s.bezierCurveTo(L * 0.16, W * 0.47, L * 0.05, W * 0.36, 0.02, W * 0.28);
-    }
-    s.closePath();
-    const geo = new THREE.ExtrudeGeometry(s, { depth: 0.016, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2);
-    const p = geo.attributes.position;
-    for (let i = 0; i < p.count; i++) {
-      const k = p.getX(i) / len;
-      p.setY(i, p.getY(i) - k * k * len * 0.1);
-    }
-    geo.computeVertexNormals();
-    return geo;
-  };
-  const flipMat = uwPatch(new THREE.MeshStandardMaterial({
-    color: 0x4d5c3c, roughness: 0.62, side: THREE.DoubleSide,
-  }), 'seaturtle-flip');
-  const mk = (px, pz, splay, rear, m) => {
-    const pivot = new THREE.Group();
-    pivot.position.set(px, -0.02, pz);
-    const f = new THREE.Mesh(flipperGeo(rear ? 0.26 : 0.52, 0.32, rear, m), flipMat);
-    pivot.add(f);
-    pivot.rotation.y = splay * m;
-    g.add(pivot);
-    return pivot;
-  };
-  const frontL = mk(0.3, 0.32, -0.5, false, 1);
-  const frontR = mk(0.3, -0.32, -0.5, false, -1);
-  const backL = mk(-0.4, 0.24, -2.35, true, 1);
-  const backR = mk(-0.4, -0.24, -2.35, true, -1);
-  return { group: g, head, frontL, frontR, backL, backR };
-}
-
 function makeTurtles(rand) {
   const n = 1 + (rand() < 0.4 ? 1 : 0);
   const group = new THREE.Group();
@@ -969,106 +557,12 @@ function makeTurtles(rand) {
 
 // ---------------------------------------------------------------- jellies
 function makeJellies(rand) {
-  const dome = new THREE.SphereGeometry(0.16, 18, 9, 0, Math.PI * 2, 0, 1.9);
-  const parts = [dome];
-  // fringe tentacles around the rim + four frilly oral arms
-  const rimY = 0.16 * Math.cos(1.9);
-  const rimR = 0.16 * Math.sin(1.9);
-  for (let i = 0; i < 22; i++) {
-    const a = (i / 22) * Math.PI * 2;
-    const strip = new THREE.PlaneGeometry(0.012, 0.2, 1, 4);
-    strip.translate(0, -0.1, 0);
-    strip.rotateY(a + Math.PI / 2);
-    strip.translate(Math.cos(a) * rimR * 0.96, rimY + 0.005, Math.sin(a) * rimR * 0.96);
-    parts.push(strip);
-  }
-  for (let i = 0; i < 4; i++) {
-    const a = (i / 4) * Math.PI * 2 + 0.4;
-    const arm = new THREE.PlaneGeometry(0.05, 0.3, 1, 5);
-    arm.translate(0, -0.13, 0);
-    arm.rotateY(a);
-    arm.translate(Math.cos(a) * 0.03, 0.02, Math.sin(a) * 0.03);
-    parts.push(arm);
-  }
-  const geo = mergeGeometries(parts);
-
+  const geo = jellyGeometry();
   const N = 9;
   const ph = new Float32Array(N);
   for (let i = 0; i < N; i++) ph[i] = rand() * Math.PI * 2;
   geo.setAttribute('aPh', new THREE.InstancedBufferAttribute(ph, 1));
-
-  const mat = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-    uniforms: {
-      uTime: uniforms.uTime,
-      uNightF: uniforms.uNightF,
-      uSunI: uniforms.uSunI,
-      uFogColor: uniforms.uFogColor,
-      uFogDensity: uniforms.uFogDensity,
-    },
-    vertexShader: /* glsl */ `
-      attribute float aPh;
-      uniform float uTime;
-      varying vec3 vN;
-      varying vec3 vV;
-      varying vec2 vUvA;
-      varying float vPulse;
-      varying float vDist;
-      void main() {
-        vUvA = uv;
-        float pulse = sin(uTime * 1.7 + aPh);
-        vPulse = pulse;
-        vec3 p = position;
-        if (p.y > -0.01) {
-          // the bell: rim flares on the power stroke, crown stays firm
-          float rimK = clamp((0.1 - p.y) / 0.16, 0.0, 1.0);
-          float s = 1.0 + 0.13 * pulse * rimK;
-          p.x *= s; p.z *= s;
-          p.y *= 1.0 - 0.08 * pulse * (1.0 - rimK);
-        } else {
-          // fringe streams behind the pulse
-          p.x += sin(uTime * 1.3 + aPh + p.y * 7.0) * 0.02 * (-p.y / 0.3);
-          p.z += cos(uTime * 1.1 + aPh * 1.3 + p.y * 6.0) * 0.02 * (-p.y / 0.3);
-        }
-        vec4 wp = modelMatrix * instanceMatrix * vec4(p, 1.0);
-        vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
-        vV = normalize(cameraPosition - wp.xyz);
-        vec4 mv = viewMatrix * wp;
-        vDist = -mv.z;
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform float uNightF;
-      uniform float uSunI;
-      uniform vec3 uFogColor;
-      uniform float uFogDensity;
-      varying vec3 vN;
-      varying vec3 vV;
-      varying vec2 vUvA;
-      varying float vPulse;
-      varying float vDist;
-      void main() {
-        float ndv = abs(dot(normalize(vN), normalize(vV)));
-        float rim = pow(1.0 - ndv, 2.0);
-        vec3 col = vec3(0.72, 0.82, 0.9) * (0.35 + 0.65 * uSunI);
-        // the four horseshoe gonads glowing through the bell
-        float go = smoothstep(0.55, 0.95, sin(vUvA.x * 25.13))
-          * exp(-pow((vUvA.y - 0.42) * 4.5, 2.0));
-        col = mix(col, vec3(0.9, 0.55, 0.72), go * 0.7);
-        // moon jellies come alive at night
-        col += vec3(0.15, 0.85, 0.8) * uNightF * (0.35 + 0.25 * vPulse);
-        float a = 0.10 + rim * 0.5 + go * 0.22;
-        a *= 0.55 + 0.45 * uSunI + uNightF * 0.4;
-        float fogF = 1.0 - exp(-uFogDensity * uFogDensity * vDist * vDist);
-        col = mix(col, uFogColor, fogF);
-        gl_FragColor = vec4(col, a * (1.0 - fogF * 0.7));
-      }
-    `,
-  });
-
+  const mat = jellyMaterial();
   const inst = new THREE.InstancedMesh(geo, mat, N);
   inst.frustumCulled = false;
   inst.renderOrder = 1;
@@ -1122,80 +616,12 @@ function makeJellies(rand) {
 }
 
 // ------------------------------------------------------------------ moray
-function eelTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 128;
-  const ctx = c.getContext('2d');
-  const rand = mulberry32(883);
-  ctx.fillStyle = '#4a5a2e';
-  ctx.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 500; i++) {
-    ctx.fillStyle = rand() < 0.5
-      ? `rgba(30,38,18,${0.25 + rand() * 0.35})`
-      : `rgba(120,132,72,${0.2 + rand() * 0.3})`;
-    ctx.beginPath();
-    ctx.arc(rand() * 128, rand() * 128, 1 + rand() * 3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  return t;
-}
-
-function makeEel(den, rand) {
+function makeEel(den) {
   if (!den) return null;
-  const group = new THREE.Group();
-  group.name = 'moray';
-  const mat = uwPatch(new THREE.MeshStandardMaterial({
-    map: eelTexture(), roughness: 0.65,
-  }), 'moray');
-
-  const dir = new THREE.Vector3(Math.cos(den.heading), 0, Math.sin(den.heading));
-  const p0 = new THREE.Vector3(den.x - dir.x * 0.5, den.y - 0.12, den.z - dir.z * 0.5);
-  const pts = [
-    p0,
-    new THREE.Vector3(den.x + dir.x * 0.1, den.y + 0.02, den.z + dir.z * 0.1),
-    new THREE.Vector3(den.x + dir.x * 0.32, den.y + 0.16, den.z + dir.z * 0.32),
-    new THREE.Vector3(den.x + dir.x * 0.5, den.y + 0.34, den.z + dir.z * 0.5),
-  ];
-  const curve = new THREE.CatmullRomCurve3(pts);
-  const neck = new THREE.Mesh(new THREE.TubeGeometry(curve, 16, 0.052, 8), mat);
-  group.add(neck);
-
-  const head = new THREE.Group();
-  const skull = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 8), mat);
-  skull.scale.set(1.5, 0.85, 0.8);
-  head.add(skull);
-  const jawMat = uwPatch(new THREE.MeshStandardMaterial({
-    color: 0x9aa87a, roughness: 0.6,
-  }), 'moray-jaw');
-  const lower = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.12, 7), jawMat);
-  lower.rotation.z = -Math.PI / 2;
-  lower.position.set(0.08, -0.025, 0);
-  head.add(lower);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x101008, roughness: 0.25 });
-  for (const m of [1, -1]) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.011, 6, 5), eyeMat);
-    eye.position.set(0.045, 0.03, 0.035 * m);
-    head.add(eye);
-  }
-  const tip = pts[3];
-  head.position.copy(tip);
-  group.add(head);
-
-  function update(t) {
-    // slow threat-posture sway and that perpetual moray gape
-    const sway = Math.sin(t * 0.9) * 0.12 + Math.sin(t * 0.37) * 0.08;
-    head.position.set(
-      tip.x + Math.cos(den.heading + Math.PI / 2) * sway * 0.3,
-      tip.y + Math.sin(t * 0.6) * 0.03,
-      tip.z + Math.sin(den.heading + Math.PI / 2) * sway * 0.3
-    );
-    head.rotation.y = -den.heading + sway;
-    lower.rotation.z = -Math.PI / 2 - (0.3 + Math.sin(t * 1.4) * 0.22);
-  }
-  return { group, update };
+  const eel = buildEel();
+  eel.group.position.set(den.x, den.y, den.z);
+  eel.group.rotation.y = -den.heading;
+  return eel;
 }
 
 // ------------------------------------------------------------------ build
@@ -1234,8 +660,8 @@ export function buildSealife(player, reef) {
   });
 
   // the shy patrol
-  const sharks = makeSharks(lib, rand);
-  group.add(sharks.inst);
+  const sharks = makeSharks(rand);
+  group.add(sharks.group);
   systems.push(sharks);
 
   // silver weather around the deep cluster
@@ -1243,7 +669,7 @@ export function buildSealife(player, reef) {
   group.add(bait.inst);
   systems.push(bait);
 
-  const clown = makeClownfish(reef.anemones, rand);
+  const clown = makeClownfish(lib, reef.anemones, rand);
   if (clown) { group.add(clown.inst); systems.push(clown); }
 
   const rays = makeRays(rand, reef.meadows);
@@ -1258,7 +684,7 @@ export function buildSealife(player, reef) {
   group.add(jellies.inst);
   systems.push(jellies);
 
-  const eel = makeEel(reef.eelDen, rand);
+  const eel = makeEel(reef.eelDen);
   if (eel) {
     group.add(eel.group);
     systems.push({ update: (t) => eel.update(t) });

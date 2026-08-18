@@ -5,99 +5,12 @@
 // roll over it. Crabs scuttle sideways, as crabs do.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
 import { runupNow, ZONES } from './swash.js';
 import { subSeed } from '../core/seed.js';
-
-const _v = new THREE.Vector3();
-
-function tube(fx, fy, fz, tx, ty, tz, r1, r2) {
-  const from = new THREE.Vector3(fx, fy, fz);
-  const dir = new THREE.Vector3(tx - fx, ty - fy, tz - fz);
-  const len = dir.length();
-  const g = new THREE.CylinderGeometry(r2, r1, len, 6);
-  g.translate(0, len / 2, 0);
-  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
-  g.applyQuaternion(q);
-  g.translate(fx, fy, fz);
-  return g;
-}
-
-function buildLegGeometry() {
-  return mergeGeometries([
-    tube(0, 0, 0, 0.046, -0.02, 0.004, 0.0042, 0.0034),
-    tube(0.046, -0.02, 0.004, 0.08, -0.066, 0.007, 0.0032, 0.0008),
-  ]);
-}
-
-function buildClawGeometry(sign) {
-  const palm = new THREE.SphereGeometry(0.019, 10, 8);
-  palm.scale(1.3, 0.85, 1.15);
-  palm.translate(0.015 * sign, -0.002, 0.05);
-  return mergeGeometries([
-    tube(0, 0, 0, 0.012 * sign, -0.004, 0.032, 0.006, 0.0075),
-    palm,
-    tube(0.02 * sign, 0.004, 0.062, 0.026 * sign, 0.014, 0.078, 0.0048, 0.001),
-  ]);
-}
-
-function buildCrab(tint) {
-  const shellMat = new THREE.MeshStandardMaterial({ color: tint, roughness: 0.62 });
-  const legMat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(tint).multiplyScalar(0.72), roughness: 0.7,
-  });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x1c1410, roughness: 0.35 });
-
-  const g = new THREE.Group();
-
-  const shellGeo = new THREE.SphereGeometry(0.075, 18, 12);
-  shellGeo.scale(1.28, 0.55, 0.95);
-  const body = new THREE.Mesh(shellGeo, shellMat);
-  body.position.y = 0.012;
-  body.castShadow = true;
-  g.add(body);
-
-  const eyeGeo = mergeGeometries([
-    tube(-0.02, 0.02, 0.06, -0.025, 0.05, 0.068, 0.0028, 0.0022),
-    tube(0.02, 0.02, 0.06, 0.025, 0.05, 0.068, 0.0028, 0.0022),
-    new THREE.SphereGeometry(0.0075, 8, 6).translate(-0.025, 0.054, 0.069),
-    new THREE.SphereGeometry(0.0075, 8, 6).translate(0.025, 0.054, 0.069),
-  ]);
-  g.add(new THREE.Mesh(eyeGeo, darkMat));
-
-  const claws = [];
-  for (const sign of [-1, 1]) {
-    const claw = new THREE.Mesh(buildClawGeometry(sign), shellMat);
-    const pivot = new THREE.Group();
-    pivot.position.set(0.05 * sign, 0.008, 0.055);
-    pivot.rotation.y = -0.35 * sign;
-    pivot.add(claw);
-    claw.castShadow = true;
-    g.add(pivot);
-    claws.push(pivot);
-  }
-
-  const legGeo = buildLegGeometry();
-  const legs = [];
-  const zPos = [0.046, 0.017, -0.014, -0.046];
-  const fan = [0.55, 0.2, -0.18, -0.55];
-  for (const side of [-1, 1]) {
-    for (let i = 0; i < 4; i++) {
-      const hip = new THREE.Group();
-      hip.position.set(0.055 * side, 0.004, zPos[i]);
-      hip.rotation.y = (side > 0 ? 0 : Math.PI) + fan[i] * side;
-      const leg = new THREE.Mesh(legGeo, legMat);
-      hip.add(leg);
-      g.add(hip);
-      legs.push({ hip, phase: i * 2.4 + (side > 0 ? 0 : Math.PI) });
-    }
-  }
-
-  return { group: g, claws, legs };
-}
+import { buildCrab } from '../creatures/crab.js';
 
 // find a spot on the beach band near an azimuth
 // (the band is measured above the live waterline, so it rides the tide)
