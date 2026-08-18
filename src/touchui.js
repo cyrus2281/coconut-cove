@@ -1,13 +1,15 @@
-// On-screen touch controls: a virtual joystick (move) and a jump button.
+// On-screen touch controls: a virtual joystick (move), a jump button, and a
+// dive button that surfaces while swimming (when jump doubles as float).
 // The joystick writes into player.touchMove (x = strafe, y = back/forward),
-// the jump button holds player.touchJump. Mouse fallbacks are wired so the
-// controls are testable on desktop too.
+// the buttons hold player.touchJump / player.touchDive. Mouse fallbacks are
+// wired so the controls are testable on desktop too.
 
 export function buildTouchUI(player) {
   const root = document.getElementById('touchui');
   const joy = document.getElementById('joy');
   const knob = document.getElementById('knob');
   const jump = document.getElementById('jumpBtn');
+  const dive = document.getElementById('diveBtn');
   const TRAVEL = 46; // knob travel radius in px
 
   function setKnob(dx, dy) {
@@ -83,7 +85,34 @@ export function buildTouchUI(player) {
   jump.addEventListener('mousedown', press);
   window.addEventListener('mouseup', unpress);
 
+  // --- dive button (only shown while swimming) ---
+  const divePress = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    player.touchDive = true;
+    dive.classList.add('pressed');
+  };
+  const diveUnpress = () => {
+    player.touchDive = false;
+    dive.classList.remove('pressed');
+  };
+  dive.addEventListener('touchstart', divePress, { passive: false });
+  dive.addEventListener('touchend', diveUnpress);
+  dive.addEventListener('touchcancel', diveUnpress);
+  dive.addEventListener('mousedown', divePress);
+  window.addEventListener('mouseup', diveUnpress);
+
+  // in the water the jump thumb becomes the float thumb
+  let wasSwimming = false;
+  function setSwimming(s) {
+    if (s === wasSwimming) return;
+    wasSwimming = s;
+    root.classList.toggle('swimming', s);
+    jump.textContent = s ? 'FLOAT' : 'JUMP';
+    if (!s) diveUnpress();
+  }
+
   return {
+    setSwimming,
     show() {
       root.classList.remove('hidden');
       document.body.classList.add('touch-ui'); // CSS trims keycap hints

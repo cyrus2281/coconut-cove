@@ -110,6 +110,7 @@ export class Player {
     // on-screen joystick (touchui.js), which writes touchMove/touchJump
     this.touchMove = new THREE.Vector2();
     this.touchJump = false;
+    this.touchDive = false;
     const looks = new Map();
     dom.addEventListener('touchstart', (e) => {
       for (const t of e.changedTouches) {
@@ -195,7 +196,7 @@ export class Player {
     let kick = 0;
     if (this.enabled) {
       if (k.has('Space') || this.touchJump) kick += 1;
-      if (k.has('KeyC') || k.has('ControlLeft')) kick -= 1;
+      if (k.has('KeyC') || k.has('ControlLeft') || this.touchDive) kick -= 1;
     } else { fwd = 0; strafe = 0; }
 
     const fast = k.has('ShiftLeft') || k.has('ShiftRight');

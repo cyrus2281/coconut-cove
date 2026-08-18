@@ -288,6 +288,7 @@ renderer.setAnimationLoop(() => {
 
   uniforms.uTime.value = t;
   player.update(dt);
+  touchUI.setSwimming(player.swimming);
   world.birds.update(t, dt);
   sky.update(dt, t);
   underwater.update(t, dt); // after sky: it overrides the fog when submerged
