@@ -18,20 +18,20 @@ npm run dev
 
 Open <http://localhost:5173>, click **walk the beach**.
 
-Every island is grown from a seed — shoreline, palms, surge zones, **and the
-moment you arrive**: the time of day, the tide that goes with it, and the
-weather (some islands greet you mid-squall). The title screen shows the
-current one (`island #2281`, a curated golden afternoon, by default). Flip
-**use a random island seed** to regrow a brand-new island live — the switch
-sticks, so every refresh rolls another island at another hour — or pin a
+Every island is grown from a seed — shoreline, palms, surge zones, reefs,
+**and the moment you arrive**: the time of day, the tide that goes with it,
+and the weather (some islands greet you mid-squall). The title screen shows
+the current one (`island #2281`, a curated golden afternoon, by default).
+Hit the ⟳ button (or `R`) to regrow a brand-new island live, or pin a
 favorite with `http://localhost:5173/?seed=12345`.
 
 | Input | Action |
 | --- | --- |
-| `W A S D` / arrows | walk |
-| mouse | look (pointer lock, click-drag fallback) |
-| `Shift` | run |
-| `Space` | jump |
+| `W A S D` / arrows | walk · swim (wade past chest depth and the water takes you) |
+| mouse | look (pointer lock, click-drag fallback) — underwater, you swim where you look |
+| `Shift` | run · swim faster |
+| `Space` | jump · float up |
+| `C` | sink down / dive |
 | `E` | lie back in the hammock (any move key gets you up) |
 | `R` | grow a brand-new island (same as the ⟳ button, seed lands in the URL) |
 | `M` | toggle ocean sound |
@@ -105,6 +105,27 @@ Everything is generated at startup from seeded noise — geometry, textures
   night grass; loose coconuts you can punt down the beach and watch the
   surf strand back on the wet sand; a striped hammock between two palms
   (`E` to lie back and watch the fronds, clouds and shooting stars).
+- **Snorkeling** — wade past chest depth and you're swimming: float at the
+  surface riding the swell, look down and kick to dive. Below, the world
+  changes — sea-water fog that darkens with depth, the sky visible only
+  through a shimmering Snell's window overhead (mirror beyond it), hanging
+  sun shafts, drifting plankton motes (some glow at night), your own exhaled
+  bubbles wobbling up, and every sound muffled to a deep wash.
+- **Coral reefs** — seeded gardens on the offshore shelf: boulder mounds
+  crusted pink with coralline algae, brain corals wearing painted maze
+  grooves, staghorn thickets, table corals, swaying gorgonian sea fans, tube
+  sponges, anemones with glowing tentacle tips, urchins, starfish, seagrass
+  meadows — and giant clams that snap shut if you loom over them.
+- **Life below** — sergeant majors, blue tangs, yellow tangs, butterflyfish
+  pairs, an emperor angelfish, parrotfish, clownfish that tuck into their
+  anemones when you get close, a shimmering fusilier bait ball that parts
+  around you, stingrays gliding over the meadows (they bury themselves in
+  the sand to rest), cruising green sea turtles that rise to breathe,
+  shy blacktip reef sharks patrolling the deeper water, moon jellies pulsing
+  near the surface (they glow at night), and a moray eel gaping from its
+  den. Everything swims — tails whip, wings ripple, flippers fly.
+- **The edge of the cove** — you can snorkel the whole reef, but past it a
+  firm current turns you back ("you can't swim any further").
 - **Seeded worlds** — one master seed grows the shoreline, terrain, surge
   zones, cay bearing, lagoon, big fig, landmarks, palms, scatter and fauna
   homes. Same seed, same island, every time — and the ⟳ / `R` button pins
@@ -129,4 +150,6 @@ __beach.stampLine()             // lay a test track of footprints into the surge
 __beach.pondside()              // stand on the lagoon bank
 __beach.figview()               // face the grandmother fig
 __beach.campview()              // stand by the campfire
+__beach.snorkel()               // float at the surface over a coral garden
+__beach.dive(2)                 // hang mid-water inside the 3rd coral garden
 ```

@@ -54,7 +54,13 @@ export class OceanAudio {
 
     this.master = ctx.createGain();
     this.master.gain.value = 0;
-    this.master.connect(ctx.destination);
+    // one lowpass between the world and your ears: wide open in the air,
+    // slammed down to a muffled thud with your head under the water
+    this.lp = ctx.createBiquadFilter();
+    this.lp.type = 'lowpass';
+    this.lp.frequency.value = 19500;
+    this.lp.Q.value = 0.4;
+    this.master.connect(this.lp).connect(ctx.destination);
 
     const mkLayer = (opts) => {
       const src = ctx.createBufferSource();
@@ -91,6 +97,9 @@ export class OceanAudio {
 
     // campfire: a low rushing bed; the pops are scheduled in update()
     this.fireBed = mkLayer({ kind: 'fire', type: 'bandpass', freq: 820, q: 0.5, rate: 1.35 });
+    // the underwater bed: a slow deep wash, silent until you submerge
+    this.uwBed = mkLayer({ kind: 'uw', freq: 210, q: 0.7, rate: 0.62 });
+    this.uwK = 0;
     this.noiseBuf = buf;
     this._nextPop = 0;
 
@@ -150,9 +159,19 @@ export class OceanAudio {
       }
     }
 
+    // underwater: the lowpass clamps down and the deep wash swells up
+    if (this.lp) {
+      const uw = this.uwK;
+      this.lp.frequency.setTargetAtTime(19500 - (19500 - 460) * uw, now, 0.12);
+      const wash = 0.55 + 0.45 * Math.sin(t * 0.5) * Math.sin(t * 0.23 + 1.7);
+      this.uwBed.g.gain.setTargetAtTime(uw * 0.34 * (0.6 + 0.4 * wash), now, 0.25);
+      this.uwBed.filter.frequency.setTargetAtTime(180 + 90 * wash, now, 0.4);
+    }
+
     for (const l of this.layers) {
       if (l.kind === 'rain') continue; // driven by setRain
       if (l.kind === 'fire') continue; // driven above
+      if (l.kind === 'uw') continue;   // driven above
       const s = 0.5 + 0.5 * Math.sin((t / (l.period || 10)) * Math.PI * 2 + (l.phase || 0));
       const swell = Math.pow(s, l.pow || 1);
 
@@ -246,6 +265,51 @@ export class OceanAudio {
     o.connect(g).connect(p).connect(this.master);
     o.start(now);
     o.stop(now + 0.13);
+  }
+
+  // how far under the player's head is (0 air → 1 submerged, pre-smoothed)
+  setUnderwater(k) {
+    this.uwK = k;
+  }
+
+  // a body hitting the water: a burst of filtered noise sweeping down
+  splash(intensity = 0.6) {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.playbackRate.value = 1.2 + Math.random() * 0.5;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(1400, now);
+    bp.frequency.exponentialRampToValueAtTime(320, now + 0.28);
+    bp.Q.value = 0.7;
+    const g = ctx.createGain();
+    const amp = 0.16 + 0.5 * intensity;
+    g.gain.setValueAtTime(amp, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.30 + intensity * 0.25);
+    src.connect(bp).connect(g).connect(this.master);
+    src.start(now, Math.random() * 3, 0.6);
+  }
+
+  // one exhaled bubble: a tiny sine blip curling upward in pitch
+  bubble() {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    const f0 = 260 + Math.random() * 240;
+    o.frequency.setValueAtTime(f0, now);
+    o.frequency.exponentialRampToValueAtTime(f0 * (2.1 + Math.random()), now + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.05 + Math.random() * 0.05, now + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    o.connect(g).connect(this.master);
+    o.start(now);
+    o.stop(now + 0.12);
   }
 
   setRain(k) {

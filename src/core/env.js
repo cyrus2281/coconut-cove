@@ -34,6 +34,7 @@ export const uniforms = {
   uRainWet: { value: 0 }, // rain-soaked ground 0..1 (rises with rain, dries slowly)
   uFogColor: { value: FOG_COLOR.clone() },
   uFogDensity: { value: FOG_DENSITY },
+  uUW: { value: 0 },      // 0 above water → 1 with the camera fully submerged
   // interior freshwater ponds: (centerX, centerZ, outerRadius, surfaceY).
   // radius 0 = absent; island.js owns them, the sand and pond shaders read
   // them to know where standing fresh water is. Two slots: the main pond

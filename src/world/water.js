@@ -268,6 +268,30 @@ void main() {
   float foam = clamp(edgeFoam + frontFoam * 0.85 + cap + boreFoam * 0.85, 0.0, 1.0);
   vec3 foamCol = vec3(0.92, 0.95, 0.96) * (0.55 + 0.45 * max(dot(vec3(0, 1, 0), uSunDir), 0.0));
 
+  // ---- seen from below: Snell's window overhead, a mirror everywhere else ----
+  if (!gl_FrontFacing) {
+    vec3 Vd = -V; // camera → surface, points up-ish
+    // refract out into the air; a zero vector means total internal reflection
+    vec3 rr = refract(Vd, -N, 1.334);
+    float tir = step(dot(rr, rr), 1e-5);
+    vec3 skyRefr = skyColor(normalize(rr + vec3(0.0, 1e-4, 0.0))) * 1.12;
+    // outside the window the surface mirrors the water back at itself
+    vec3 mirrorCol = uFogColor * 0.85 + uDeepColor * 0.10;
+    mirrorCol += uSunColor * pow(max(dot(reflect(Vd, N), uSunDir), 0.0), 60.0) * 0.12;
+    // the window rim shimmers with the wave normals (N is already perturbed)
+    float win = (1.0 - tir) * smoothstep(0.0, 0.15, dot(Vd, N) - 0.655);
+    vec3 col = mix(mirrorCol, skyRefr, win);
+    // wave crests carry their foam on the underside too
+    col = mix(col, foamCol * 0.72, foam * 0.5);
+    float fogF = 1.0 - exp(-uFogDensity * uFogDensity * viewDist * viewDist);
+    col = mix(col, uFogColor, fogF);
+    float uAlpha = mix(0.97, 0.88, win); // the window is clearer than the mirror
+    uAlpha = max(uAlpha, foam * 0.95);
+    uAlpha = mix(uAlpha, 1.0, fogF);
+    gl_FragColor = vec4(col, uAlpha);
+    return;
+  }
+
   // ---- compose ----
   vec3 col = mix(body, refl, fresnel) + uSunColor * spec;
   col = mix(col, foamCol, foam * 0.92);
@@ -310,6 +334,7 @@ export function buildOcean(heightTex) {
     fragmentShader: FRAG,
     transparent: true,
     depthWrite: false,
+    side: THREE.DoubleSide, // the underside is the snorkeler's ceiling
     defines: { WATER_DEBUG: 1 },
     uniforms: {
       uDebug: { value: 0 },

@@ -165,11 +165,45 @@
     #mute.muted .on { display: none; }
     #mute.muted .off { display: block; }
     #loading { font-family: ui-monospace, Menlo, monospace; font-size: 13px; opacity: 0.6; }
+
+    /* under the surface: a soft teal mask-tint with a darker rim */
+    #uw {
+      position: fixed; inset: 0; pointer-events: none; z-index: 4; opacity: 0;
+      background:
+        radial-gradient(ellipse at 50% 32%, rgba(45, 160, 175, 0.07), rgba(5, 38, 60, 0.32) 82%),
+        linear-gradient(rgba(10, 64, 88, 0.10), rgba(3, 26, 44, 0.24));
+      transition: opacity 0.35s ease;
+    }
+    #uw.on { opacity: 1; }
+
+    /* floating messages (swim hint, boundary current) */
+    .covePill {
+      position: fixed; left: 50%; top: 15%; transform: translateX(-50%);
+      font-family: Georgia, 'Times New Roman', serif; font-style: italic;
+      font-size: 16.5px; color: #f2ede2; text-align: center;
+      background: rgba(8, 30, 44, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 999px;
+      padding: 10px 24px; z-index: 8; pointer-events: none;
+      max-width: 86vw; backdrop-filter: blur(6px);
+      opacity: 0; transition: opacity 0.5s ease;
+    }
+    .covePill.show { opacity: 1; }
+    .covePill b {
+      font-style: normal; font-family: ui-monospace, Menlo, monospace;
+      font-size: 12.5px; border: 1px solid rgba(242, 237, 226, 0.4);
+      border-radius: 5px; padding: 1px 6px; font-weight: normal;
+    }
+    #swimHint { top: auto; bottom: 14%; font-size: 14.5px; }
+    body.touch-ui #swimHint b { display: none; }
   </style>
 </head>
 <body>
   <canvas id="scene"></canvas>
+  <div id="uw"></div>
   <div id="vignette"></div>
+
+  <div id="boundPill" class="covePill">🌊 the current is firm here — you can't swim any further</div>
+  <div id="swimHint" class="covePill">you're swimming — dive where you look · <b>space</b> floats up · <b>C</b> sinks down</div>
 
   <button id="regen" class="hidden" title="grow a brand-new island — R (the seed goes in the URL)">
     <span class="glyph">⟳</span>new island <b>R</b>
@@ -180,10 +214,11 @@
     <p class="sub">a tiny island, grown entirely from code</p>
     <button id="enter">walk the beach</button>
     <div id="controls">
-      <span><b>W A S D</b>walk</span>
+      <span><b>W A S D</b>walk · swim</span>
       <span><b>mouse</b>look</span>
       <span><b>shift</b>run</span>
-      <span><b>space</b>jump</span>
+      <span><b>space</b>jump · float</span>
+      <span><b>C</b>dive</span>
       <span><b>E</b>hammock</span>
       <span><b>R</b>new island</span>
       <span><b>M</b>sound</span>

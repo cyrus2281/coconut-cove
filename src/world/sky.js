@@ -181,6 +181,7 @@ export function buildSky(scene, renderer, camera) {
   }
 
   // stars
+  let starsObj = null;
   const starMat = new THREE.PointsMaterial({
     size: 2.2,
     sizeAttenuation: false,
@@ -216,6 +217,7 @@ export function buildSky(scene, renderer, camera) {
     const stars = new THREE.Points(g, starMat);
     stars.frustumCulled = false;
     scene.add(stars);
+    starsObj = stars;
   }
 
   // shooting stars: a tiny pool of streak sprites, spawned at random while
@@ -270,6 +272,10 @@ export function buildSky(scene, renderer, camera) {
   }
 
   function updateMeteors(dt) {
+    if (submerged) {
+      for (const m of meteors) m.sprite.visible = false;
+      return;
+    }
     const vis = starMat.opacity / 0.85; // ride the star fade
     meteorWait -= dt * vis;
     if (meteorWait <= 0 && vis > 0.5) {
@@ -302,6 +308,18 @@ export function buildSky(scene, renderer, camera) {
   }));
   moon.scale.setScalar(260);
   scene.add(moon);
+
+  // underwater the celestial furniture disappears — the snorkeler sees the
+  // sky only through the surface shader's Snell window, never the dome itself
+  let submerged = false;
+  function setSubmerged(s) {
+    if (s === submerged) return;
+    submerged = s;
+    sky.visible = !s;
+    moon.visible = !s;
+    if (starsObj) starsObj.visible = !s;
+    for (const c of clouds) c.sprite.visible = !s;
+  }
 
   // ---- the cycle ----
   let tod = START_TOD;
@@ -445,6 +463,7 @@ export function buildSky(scene, renderer, camera) {
     update,
     attachWater(mat) { waterMat = mat; },
     attachPond(mat) { pondMat = mat; },
+    setSubmerged,
     setTod(v) { tod = ((v % 1) + 1) % 1; },
     getTod: () => tod,
     warp(s) { tod = (tod + s / DAY_CYCLE_SECONDS) % 1; },

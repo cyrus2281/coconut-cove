@@ -1,6 +1,9 @@
-// First-person beach walker: pointer-lock mouse look (with drag fallback),
-// WASD/arrows + run + jump, gravity, terrain collision from the island height
-// function, wading slowdown in the shallows, and a soft head-bob.
+// First-person beach walker and snorkeler: pointer-lock mouse look (with drag
+// fallback), WASD/arrows + run + jump, gravity, terrain collision from the
+// island height function, wading slowdown in the shallows, and a soft
+// head-bob. Wade past chest depth and the water takes you — surface swimming
+// rides the swell, diving follows your gaze, and a gentle current marks the
+// edge of the cove so you can't swim out to sea.
 
 import * as THREE from 'three';
 import { islandHeight, shoreRadius, waterLevelAt } from './world/island.js';
@@ -8,9 +11,29 @@ import { runupNow, runupVel, ZONES } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
 const EYE = 1.66;
+const EYE_SURF = 0.42;  // eye height above the waterline while surface swimming
 const WALK = 4.3, RUN = 7.6;
 const GRAVITY = 22, JUMP = 6.8;
-const MAX_WADE_DEPTH = 1.25; // deeper than this pushes you back
+const MAX_WADE_DEPTH = 1.25; // walking deeper than this pushes you back
+const SWIM_ON = 1.12;   // water this deep floats you off your feet
+const SWIM_OFF = 0.95;  // wading back in: feet find the ground again
+const SWIM = 2.7, SWIM_FAST = 4.7;
+export const SWIM_MAX = 72; // how far past the shoreline the cove lets you swim
+
+// JS mirror of the two dominant Gerstner swells in water.js (W0 + W1) — just
+// enough for the camera to ride the waves while surface swimming. W2/W3 are
+// fine chop the eye doesn't need to track.
+function gerstY(x, z, t, dx, dz, amp, len) {
+  const il = 1 / Math.hypot(dx, dz);
+  const k = (Math.PI * 2) / len;
+  const c = Math.sqrt(9.8 / k);
+  return amp * Math.sin(k * ((x * dx + z * dz) * il - c * t));
+}
+export function swellAt(x, z, t, depth) {
+  const shallow = THREE.MathUtils.clamp(depth / 1.8, 0.1, 1);
+  return (gerstY(x, z, t, 1.0, 0.25, 0.25, 33)
+    + gerstY(x, z, t, 0.72, 0.62, 0.14, 17)) * shallow;
+}
 
 export class Player {
   constructor(camera, dom) {
@@ -29,6 +52,15 @@ export class Player {
     this.bob = 0;
     this.enabled = false; // set true when the intro overlay is dismissed
     this.resting = false; // lying in the hammock: it owns the camera
+
+    // swimming
+    this.swimming = false;
+    this.submerged = false; // eye below the water surface right now
+    this.subK = 0;          // smoothed 0→1 submersion (audio / overlay fades)
+    this.surfaceY = 0;      // live water surface at the player (tide + swell)
+    this.boundaryK = 0;     // 0 free water → 1 pressed against the swim limit
+    this.swimTime = 0;      // seconds spent in the current swim
+    this.onSplash = null;   // (intensity 0..1) => void, fired on water entry
 
     // footprint stamping
     this.onStep = null;   // (x, z, h, dirX, dirZ, side) => void
@@ -49,6 +81,10 @@ export class Player {
     this.pitch = -0.06;
     this.vel.set(0, 0, 0);
     this.grounded = true;
+    this.swimming = false;
+    this.submerged = false;
+    this.subK = 0;
+    this.boundaryK = 0;
   }
 
   _bind() {
@@ -114,6 +150,136 @@ export class Player {
 
   update(dt) {
     if (this.resting) return; // the hammock drives the camera; keys still read
+    const t = uniforms.uTime.value;
+    const ground = islandHeight(this.pos.x, this.pos.z);
+    const still = waterLevelAt(this.pos.x, this.pos.z);
+    const depth = still - ground;
+    this.surfaceY = still + swellAt(this.pos.x, this.pos.z, t, depth);
+
+    // deep enough to float and low enough to be in it: the water takes you
+    if (!this.swimming) {
+      if (depth > SWIM_ON && this.pos.y - EYE < this.surfaceY - 0.55) {
+        this.swimming = true;
+        this.grounded = false;
+        this.swimTime = 0;
+        this.strideAcc = 0.45;
+        if (this.onSplash) {
+          this.onSplash(THREE.MathUtils.clamp(0.35 + Math.abs(this.vel.y) * 0.22, 0, 1));
+        }
+        this.vel.y *= 0.25; // the water catches you
+      }
+    } else if (depth < SWIM_OFF) {
+      this.swimming = false; // feet can reach the sand again
+      this.boundaryK = 0;
+    }
+
+    if (this.swimming) this._updateSwim(dt, t, ground);
+    else this._updateWalk(dt, t, ground, still);
+
+    // smoothed submersion drives the underwater tint / audio muffle fades
+    this.submerged = this.pos.y + this.bob < this.surfaceY - 0.02;
+    this.subK += ((this.submerged ? 1 : 0) - this.subK) * Math.min(dt * 7, 1);
+
+    this.camera.position.set(this.pos.x, this.pos.y + this.bob, this.pos.z);
+    this.camera.rotation.set(this.pitch, this.yaw, 0);
+  }
+
+  // ---------------------------------------------------------------- swimming
+  _updateSwim(dt, t, ground) {
+    const k = this.keys;
+    this.swimTime += dt;
+    let fwd = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
+    let strafe = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
+    fwd += -this.touchMove.y;
+    strafe += this.touchMove.x;
+    let kick = 0;
+    if (this.enabled) {
+      if (k.has('Space') || this.touchJump) kick += 1;
+      if (k.has('KeyC') || k.has('ControlLeft')) kick -= 1;
+    } else { fwd = 0; strafe = 0; }
+
+    const fast = k.has('ShiftLeft') || k.has('ShiftRight');
+    const spd = fast ? SWIM_FAST : SWIM;
+
+    // forward follows your gaze once your eyes are under (that's the dive);
+    // from the surface an emphatic look-down also takes you under
+    const usePitch = this.submerged || this.pitch < -0.5;
+    const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
+    const cp = usePitch ? Math.cos(this.pitch) : 1;
+    const sp = usePitch ? Math.sin(this.pitch) : 0;
+    const dir = new THREE.Vector3(
+      -sy * cp * fwd + cy * strafe,
+      sp * fwd,
+      -cy * cp * fwd - sy * strafe
+    );
+    if (dir.lengthSq() > 1) dir.normalize();
+
+    const floatY = this.surfaceY + EYE_SURF;
+    let tx = dir.x * spd;
+    let ty = dir.y * spd + kick * 2.4;
+    let tz = dir.z * spd;
+
+    // buoyancy: unless you're pushing down, a snorkeler drifts up and
+    // settles right at the surface, bobbing with the swell
+    if (ty > -0.05) {
+      const lift = THREE.MathUtils.clamp((floatY - this.pos.y) * 0.9, 0, 0.85);
+      ty += lift;
+    }
+
+    const acc = 5.0; // water is soggy: slow to start, slow to stop
+    this.vel.x += (tx - this.vel.x) * Math.min(acc * dt, 1);
+    this.vel.y += (ty - this.vel.y) * Math.min(acc * 1.4 * dt, 1);
+    this.vel.z += (tz - this.vel.z) * Math.min(acc * dt, 1);
+
+    // the edge of the cove: past the reef a firm current turns you back
+    const azP = Math.atan2(this.pos.z, this.pos.x);
+    const limit = shoreRadius(azP) + SWIM_MAX;
+    const rr = Math.hypot(this.pos.x, this.pos.z);
+    this.boundaryK = THREE.MathUtils.clamp((rr - (limit - 9)) / 9, 0, 1);
+    if (this.boundaryK > 0) {
+      const push = this.boundaryK * this.boundaryK * 10;
+      this.vel.x -= Math.cos(azP) * push * dt;
+      this.vel.z -= Math.sin(azP) * push * dt;
+    }
+
+    this.pos.addScaledVector(this.vel, dt);
+
+    // hard stop at the limit: slide along the arc, never through it
+    const rNew = Math.hypot(this.pos.x, this.pos.z);
+    const azN = Math.atan2(this.pos.z, this.pos.x);
+    const limN = shoreRadius(azN) + SWIM_MAX;
+    if (rNew > limN) {
+      this.pos.x *= limN / rNew;
+      this.pos.z *= limN / rNew;
+      const outX = Math.cos(azN), outZ = Math.sin(azN);
+      const vOut = this.vel.x * outX + this.vel.z * outZ;
+      if (vOut > 0) { this.vel.x -= outX * vOut; this.vel.z -= outZ * vOut; }
+    }
+
+    // body clearance off the sand, and no launching out of the sea
+    const floor = islandHeight(this.pos.x, this.pos.z) + 0.55;
+    if (this.pos.y < floor) {
+      this.pos.y = floor;
+      if (this.vel.y < 0) this.vel.y = 0;
+    }
+    if (this.pos.y > floatY) {
+      this.pos.y = floatY;
+      if (this.vel.y > 0.4) this.vel.y = 0.4;
+    }
+
+    // slow stroke sway instead of the walking head-bob
+    const speed = this.vel.length();
+    if (speed > 0.5) {
+      this.bobPhase += dt * (1.8 + speed * 0.55);
+      this.bob = THREE.MathUtils.lerp(this.bob, Math.sin(this.bobPhase) * 0.028, 0.12);
+    } else {
+      this.bob = THREE.MathUtils.lerp(this.bob, 0, 0.06);
+    }
+    this.grounded = false;
+  }
+
+  // ----------------------------------------------------------------- walking
+  _updateWalk(dt, t, ground, still) {
     const k = this.keys;
     let fwd = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
     let strafe = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
@@ -131,8 +297,7 @@ export class Player {
     // wading drag. `tide` is the sea (the swash model below is a sea thing);
     // `water` is whatever stands underfoot, so the lagoon wades like the sea.
     const tide = uniforms.uTide.value;
-    const ground = islandHeight(this.pos.x, this.pos.z);
-    const submersion = Math.max(0, waterLevelAt(this.pos.x, this.pos.z) - ground);
+    const submersion = Math.max(0, still - ground);
     const drag = 1 / (1 + submersion * 1.1);
 
     // surge push: standing in the swash sheet, the bore carries you up the
@@ -219,8 +384,5 @@ export class Player {
     } else {
       this.bob = THREE.MathUtils.lerp(this.bob, 0, 0.1);
     }
-
-    this.camera.position.set(this.pos.x, this.pos.y + this.bob, this.pos.z);
-    this.camera.rotation.set(this.pitch, this.yaw, 0);
   }
 }

@@ -30,6 +30,9 @@ import { buildBoat } from './world/boat.js';
 import { buildFish } from './world/fish.js';
 import { buildTurtle } from './world/turtle.js';
 import { buildWeather } from './world/weather.js';
+import { buildReef } from './world/reef.js';
+import { buildSealife } from './world/sealife.js';
+import { buildUnderwater } from './world/underwater.js';
 import { Player } from './player.js';
 import { buildTouchUI } from './touchui.js';
 import { OceanAudio } from './audio.js';
@@ -63,6 +66,7 @@ scene.add(footprints.mesh);
 
 const player = new Player(camera, canvas);
 player.onStep = footprints.stamp;
+player.onSplash = (k) => audio.splash(k);
 
 let world = null;
 
@@ -102,6 +106,10 @@ function buildWorldNow() {
   scene.add(crabs.group);
   const fish = buildFish(player);
   scene.add(fish.group);
+  const reef = buildReef();
+  scene.add(reef.group);
+  const sealife = buildSealife(player, reef);
+  scene.add(sealife.group);
   const birds = buildBirds(player, audio);
   scene.add(birds.group);
   // the seed decides how many turtles call this island home
@@ -127,7 +135,7 @@ function buildWorldNow() {
   return {
     terrain, heightTex, ocean, pond, horizon, palms, fig, scatterG,
     campfire, fireflies, butterflies, coconuts, hammock, crabs, fish,
-    birds, turtles,
+    birds, turtles, reef, sealife,
   };
 }
 
@@ -170,7 +178,8 @@ function rebuildWorld() {
       world.palms.group, world.fig.group, world.scatterG, world.campfire.group,
       world.fireflies.group, world.butterflies.group, world.coconuts.group,
       world.hammock.group, world.crabs.group, world.fish.group,
-      world.birds.group, world.turtles.group,
+      world.birds.group, world.turtles.group, world.reef.group,
+      world.sealife.group,
     ]) {
       scene.remove(obj);
       disposeDeep(obj);
@@ -193,6 +202,12 @@ scene.add(boat.group);
 const weather = buildWeather(camera, audio);
 scene.add(weather.group);
 applySeedMood(); // the seed picks the arrival hour + sky
+
+// the underwater feel (fog, sun shafts, motes, bubbles, boundary message)
+// lives for the whole session; it reads the live island through uniforms
+const underwater = buildUnderwater(player, camera, scene, sky, audio);
+scene.add(underwater.group);
+underwater.attachWeather(weather.group);
 
 // ---- UI ----
 const touchUI = buildTouchUI(player);
@@ -275,6 +290,9 @@ renderer.setAnimationLoop(() => {
   player.update(dt);
   world.birds.update(t, dt);
   sky.update(dt, t);
+  underwater.update(t, dt); // after sky: it overrides the fog when submerged
+  world.reef.update(t, dt, player);
+  world.sealife.update(t, dt);
   world.crabs.update(t, dt);
   world.campfire.update(t, dt);
   world.fireflies.update(t, dt);
@@ -318,6 +336,8 @@ window.__beach = {
   get turtle() { return world.turtles.list[0]; },
   get crabs() { return world.crabs; },
   get fish() { return world.fish; },
+  get reef() { return world.reef; },
+  get sealife() { return world.sealife; },
   get campfire() { return world.campfire; },
   get fireflies() { return world.fireflies; },
   get butterflies() { return world.butterflies; },
@@ -377,6 +397,36 @@ window.__beach = {
     return { center: [+L.x.toFixed(1), +L.z.toFixed(1)], level: +L.level.toFixed(2) };
   },
   rain: (on = true) => weather.rain(on),
+  // float at the surface over the nth coral garden, looking down at it
+  snorkel(n = 0) {
+    const cl = world.reef.clusters[n % world.reef.clusters.length];
+    if (!cl) return 'no reef on this island';
+    overlay.classList.add('hidden');
+    player.enabled = true;
+    const az = Math.atan2(cl.z, cl.x);
+    const x = cl.x + Math.cos(az) * 6, z = cl.z + Math.sin(az) * 6;
+    player.pos.set(x, uniforms.uTide.value + 0.42, z);
+    player.vel.set(0, 0, 0);
+    player.swimming = true;
+    player.yaw = Math.atan2(x - cl.x, z - cl.z);
+    player.pitch = -0.5;
+    return { cluster: [+cl.x.toFixed(1), +cl.z.toFixed(1)], depth: +(-cl.h).toFixed(1) };
+  },
+  // hang mid-water inside the nth coral garden
+  dive(n = 0, above = 1.2) {
+    const cl = world.reef.clusters[n % world.reef.clusters.length];
+    if (!cl) return 'no reef on this island';
+    overlay.classList.add('hidden');
+    player.enabled = true;
+    const az = Math.atan2(cl.z, cl.x);
+    const x = cl.x + Math.cos(az) * 4.5, z = cl.z + Math.sin(az) * 4.5;
+    player.pos.set(x, islandHeight(x, z) + above, z);
+    player.vel.set(0, 0, 0);
+    player.swimming = true;
+    player.yaw = Math.atan2(x - cl.x, z - cl.z);
+    player.pitch = -0.12;
+    return { cluster: [+cl.x.toFixed(1), +cl.z.toFixed(1)], depth: +(-cl.h).toFixed(1) };
+  },
   snap() { window.__snapReq = true; }, // grab the next rendered frame to window.__cap
   // lay a test track of prints marching down the beach into the surge zone
   stampLine(az = 1.55) {
