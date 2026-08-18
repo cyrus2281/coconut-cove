@@ -9,6 +9,7 @@ import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
+import { holdUnder, bodyFromGeometry } from './swim.js';
 import { silversideAsset } from '../creatures/shorefish.js';
 import { wigAttribute } from '../creatures/fishcraft.js';
 
@@ -26,6 +27,9 @@ export function buildFish(player) {
   ];
 
   const asset = silversideAsset();
+  // what a silverside takes up over and under its own midline: how much water
+  // the clamps have to leave around one (see world/swim.js)
+  const body = bodyFromGeometry(asset.geo, 0.08);
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
     e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
@@ -74,6 +78,13 @@ export function buildFish(player) {
       s.r += THREE.MathUtils.clamp(err * 4, -1, 1) * dt * 2.5;
       s.r = THREE.MathUtils.clamp(
         s.r, shoreRadius(s.azC) + 3, shoreRadius(s.azC) + 42);
+      // the mean shoreline is not the waterline: at low tide the sea has drawn
+      // several metres down the beach, and that inner bound can then sit on wet
+      // sand with the school on it. Walk the anchor out until the water it needs
+      // is really there, however far the tide has taken it.
+      for (let k = 0; k < 12 && tide - islandHeight(ax0 * s.r, az0 * s.r) < 0.3; k++) {
+        s.r += 1.2;
+      }
       const sx = ax0 * s.r, sz = az0 * s.r;
 
       for (let i = 0; i < s.fish.length; i++) {
@@ -104,8 +115,12 @@ export function buildFish(player) {
         const avail = tide - gf;
         let fy;
         if (avail < 0.25) {
-          // beached — hug what water there is and drift offshore
-          fy = Math.max(gf + 0.05, tide - 0.1);
+          // beached — hug what water there is and slide back out. Whatever
+          // pushed the fish up here loses its hold: a diver wading into the
+          // school may scatter it, but may not herd a fish onto the sand and
+          // pin it there while the water it needs is a metre behind it.
+          fy = holdUnder(gf + 0.05, fx, fz, gf, body, f.size);
+          f.flee.set(0, 0);
           const azF = Math.atan2(fz, fx);
           f.off.x += Math.cos(azF) * dt * 2.5;
           f.off.y += Math.sin(azF) * dt * 2.5;
@@ -113,7 +128,7 @@ export function buildFish(player) {
           const swim = avail - 0.3;
           fy = gf + 0.12 + swim * (0.25 + f.depthBias * 0.6)
             + Math.sin(t * 0.9 + f.vph) * 0.05;
-          fy = Math.min(fy, tide - 0.15);
+          fy = holdUnder(fy, fx, fz, gf, body, f.size);
         }
 
         // heading from actual motion + wiggle

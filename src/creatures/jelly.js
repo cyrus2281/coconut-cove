@@ -7,15 +7,23 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { uniforms } from '../core/env.js';
 
+const BELL_R = 0.16, BELL_SWEEP = 1.9;
+
+// The bell's own extents over and under the jelly's origin, in metres at scale
+// 1. Everything below the rim is streamers — the fringe and the four oral arms
+// trail, and are meant to sweep the sand rather than hold the animal off it —
+// so the swim clamps in world/sealife.js measure a jelly by its bell.
+export const JELLY_BELL = { up: BELL_R, down: -BELL_R * Math.cos(BELL_SWEEP) };
+
 export function jellyGeometry() {
-  const dome = new THREE.SphereGeometry(0.16, 26, 13, 0, Math.PI * 2, 0, 1.9);
+  const dome = new THREE.SphereGeometry(BELL_R, 26, 13, 0, Math.PI * 2, 0, BELL_SWEEP);
   // inner wall: a slightly smaller dome; backface adds visual thickness
   const inner = new THREE.SphereGeometry(0.145, 20, 10, 0, Math.PI * 2, 0, 1.85);
   inner.translate(0, -0.004, 0);
   const parts = [dome, inner];
   // fringe tentacles around the rim: long fine streamers
-  const rimY = 0.16 * Math.cos(1.9);
-  const rimR = 0.16 * Math.sin(1.9);
+  const rimY = BELL_R * Math.cos(BELL_SWEEP);
+  const rimR = BELL_R * Math.sin(BELL_SWEEP);
   for (let i = 0; i < 30; i++) {
     const a = (i / 30) * Math.PI * 2;
     const len = 0.26 + Math.sin(i * 2.7) * 0.05;

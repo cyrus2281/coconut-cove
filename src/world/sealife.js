@@ -12,10 +12,11 @@ import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
 import { islandHeight, shoreRadius } from './island.js';
+import { holdUnder, swimRoom, swimBody, bodyFromGeometry, deeperDir } from './swim.js';
 import { wigAttribute } from '../creatures/fishcraft.js';
 import { speciesLibrary } from '../creatures/species.js';
 import { rayGeometry, rayMaterial } from '../creatures/ray.js';
-import { jellyGeometry, jellyMaterial } from '../creatures/jelly.js';
+import { jellyGeometry, jellyMaterial, JELLY_BELL } from '../creatures/jelly.js';
 import { buildEel } from '../creatures/eel.js';
 import { buildShark } from '../creatures/shark.js';
 import { buildSwimTurtleMesh } from '../creatures/turtle.js';
@@ -66,6 +67,9 @@ function makeSchool({
   // clone: two schools of one species must not share an aWig attribute
   geo = geo.clone();
   wigAttribute(geo, count, rand);
+  // what this species takes up above and below its own midline, so the clamp
+  // below knows how much room a fish of this school actually needs
+  const body = bodyFromGeometry(geo, 0.15);
   const inst = new THREE.InstancedMesh(geo, mat, count);
   inst.frustumCulled = false;
   inst.name = name;
@@ -113,7 +117,7 @@ function makeSchool({
       const avail = tide - g;
       let fy = g + 0.3 + Math.max(avail - 0.8, 0) * f.hb
         + Math.sin(t * 0.9 + f.vph) * 0.09;
-      fy = THREE.MathUtils.clamp(fy, g + 0.22, tide - 0.35);
+      fy = holdUnder(fy, fx, fz, g, body, f.size);
 
       const mvx = fx - f.px, mvy = fy - f.py, mvz = fz - f.pz;
       if (mvx * mvx + mvz * mvz > 1e-9) {
@@ -143,6 +147,9 @@ function makeClownfish(lib, anemones, rand) {
   if (!count) return null;
   const rand2 = rand;
   wigAttribute(geo, count, rand2);
+  // an anemone sits on the sand, so a fish tucked against it can dip its belly
+  // into the floor
+  const body = bodyFromGeometry(geo, 0);
   const inst = new THREE.InstancedMesh(geo, mat, count);
   inst.frustumCulled = false;
   inst.name = 'clownfish';
@@ -151,11 +158,11 @@ function makeClownfish(lib, anemones, rand) {
     for (let j = 0; j < per; j++) {
       fish.push({
         home: homes[hI],
+        size: 0.8 + rand2() * 0.5,
         r: 0.22 + rand2() * 0.3,
         th: rand2() * Math.PI * 2,
         sp: (1.4 + rand2() * 1.2) * (rand2() < 0.5 ? 1 : -1),
         vph: rand2() * Math.PI * 2,
-        size: 0.8 + rand2() * 0.5,
         yaw: 0, hide: 0,
       });
     }
@@ -171,8 +178,8 @@ function makeClownfish(lib, anemones, rand) {
       const r = f.r * (1 - f.hide * 0.7);
       const x = f.home.x + Math.cos(f.th) * r;
       const z = f.home.z + Math.sin(f.th) * r;
-      const y = f.home.y + 0.1 + Math.sin(t * 1.7 + f.vph) * 0.07 * (1 - f.hide)
-        - f.hide * 0.08;
+      const y = Math.max(islandHeight(x, z) + body.sink * f.size,
+        f.home.y + 0.1 + Math.sin(t * 1.7 + f.vph) * 0.07 * (1 - f.hide) - f.hide * 0.08);
       const targetYaw = Math.atan2(
         -(Math.cos(f.th) * Math.sign(f.sp)), -Math.sin(f.th) * Math.sign(f.sp));
       let d = targetYaw - f.yaw;
@@ -191,6 +198,11 @@ function makeBaitBall(lib, rand, sharkPos) {
   const count = 130;
   const geo = lib.fusilier.geo;
   wigAttribute(geo, count, rand);
+  const body = bodyFromGeometry(geo, 0.5, 0.04);
+  // the swarm as one body, so the ball as a whole hangs in open water: a 1.4 m
+  // radius of fish around the centre below, and a little more underneath, the
+  // sand being anything but flat across a ball this wide
+  const swarm = swimBody(1.4, 1.75, 0.2);
   const inst = new THREE.InstancedMesh(geo, lib.fusilier.mat, count);
   inst.frustumCulled = false;
   inst.name = 'baitball';
@@ -221,8 +233,10 @@ function makeBaitBall(lib, rand, sharkPos) {
   function update(t, dt, player) {
     const tide = uniforms.uTide.value;
     const ground = islandHeight(hx, hz);
-    const cy = THREE.MathUtils.clamp(
-      (ground + tide) / 2 + Math.sin(t * 0.11) * 0.8, ground + 1.6, tide - 1.4);
+    // the ball's own centre, held so the whole shoal clears the water and the
+    // sand rather than just its middle
+    const cy = holdUnder((ground + tide) / 2 + Math.sin(t * 0.11) * 0.8,
+      hx, hz, ground, swarm);
     const cx = hx + Math.sin(t * 0.05) * 2.5;
     const cz = hz + Math.cos(t * 0.043) * 2.5;
     const breathe = 1 + 0.16 * Math.sin(t * 0.45);
@@ -247,7 +261,9 @@ function makeBaitBall(lib, rand, sharkPos) {
       const relax = Math.exp(-dt * 0.9);
       f.ox *= relax; f.oy *= relax; f.oz *= relax;
       x += f.ox; y += f.oy; z += f.oz;
-      y = THREE.MathUtils.clamp(y, ground + 0.6, tide - 0.5);
+      // the sand is not flat under a ball this wide, so each fish answers to the
+      // depth under itself, not to the depth at the ball's home column
+      y = holdUnder(y, x, z, islandHeight(x, z), body, f.size);
 
       const mvx = x - f.px, mvy = y - f.py, mvz = z - f.pz;
       if (mvx * mvx + mvz * mvz > 1e-9) {
@@ -279,23 +295,30 @@ function makeSharks(rand) {
   for (let i = 0; i < n; i++) {
     const rig = buildShark();
     group.add(rig.group);
+    const size = 0.98 + rand() * 0.38; // 1.6 to 2.2 m of shark
+    const rOff = 26 + rand() * 12;
     sharks.push({
       rig,
       az: rand() * Math.PI * 2,
-      rOff: 24 + rand() * 12,
+      rOff,
+      rHome: rOff, // the band it settles back into once the water is deep again
       dir: rand() < 0.5 ? 1 : -1,
       ph: rand() * 10,
       y: null, // snapped to the cruise height on the first update
       yaw: 0, pitch: 0, roll: 0,
       px: 0, py: -3, pz: 0,
       ox: 0, oz: 0,
-      size: 0.98 + rand() * 0.38, // 1.6 to 2.2 m of shark
+      size,
+      // the room this animal needs over and under its spine: its own extents,
+      // padded for the bank, the pitch and the tail's flex, plus the third of a
+      // metre it likes between belly and sand when the reef has that to give
+      body: swimBody(rig.extent.up, rig.extent.down, 0.35, 0.18),
       beat: rand(), // tail-beat phase, in cycles
       rate: 0.9 + rand() * 0.25,
       frame: 0,
     });
   }
-  const pos0 = new THREE.Vector3();
+  const pos0 = new THREE.Vector3(), deeper = new THREE.Vector2();
   function update(t, dt, player) {
     const tide = uniforms.uTide.value;
     for (let i = 0; i < sharks.length; i++) {
@@ -319,15 +342,47 @@ function makeSharks(rand) {
       s.ox *= relax; s.oz *= relax;
       x += s.ox; z += s.oz;
 
+      // Two metres of shark needs metres of water, and the shelf does not give
+      // that until the drop-off: the inner edge of the patrol band stands in
+      // about a metre of it, less at low tide. So the ring itself breathes
+      // outward whenever the floor comes up, and settles back in as the water
+      // deepens — a shark cruising the drop-off instead of the shallows.
       const g = islandHeight(x, z);
+      const room = swimRoom(x, z, g, s.body, s.size);
+      if (room < 1.5) s.rOff += Math.min(1.5 - room, 1.2) * 5 * dt;
+      else if (s.rOff > s.rHome) s.rOff = Math.max(s.rHome, s.rOff - 0.6 * dt);
+      s.rOff = Math.min(s.rOff, 52);
+
+      // and the cay, or any bar the ring crosses: sound the water a few metres
+      // up the track as well as underfoot, and lean down the slope toward deeper
+      // water while it is too thin to swim in, riding the same offset the
+      // diver-shy sheer uses. Started early enough, the animal rounds the
+      // shallow instead of being squeezed between the sand and the sky.
+      const mvx = x - s.px, mvz = z - s.pz, mvh = Math.hypot(mvx, mvz);
+      let lx = x, lz = z, lg = g; // the sounding up the track
+      if (mvh > 1e-4) {
+        lx = x + (mvx / mvh) * 6;
+        lz = z + (mvz / mvh) * 6;
+        lg = islandHeight(lx, lz);
+      }
+      if (room < 0.5 || swimRoom(lx, lz, lg, s.body, s.size) < 0.5) {
+        deeperDir(lx, lz, deeper);
+        s.ox += deeper.x * 5 * dt;
+        s.oz += deeper.y * 5 * dt;
+      }
+
       let y = g + 1.1 + Math.max(tide - g - 2.2, 0) * (0.3 + 0.25 * Math.sin(t * 0.13 + s.ph * 2));
-      y = THREE.MathUtils.clamp(y, g + 0.7, tide - 0.9);
+      y = holdUnder(y, x, z, g, s.body, s.size);
       if (s.y === null) { s.y = y; s.py = y; }
       s.y += (y - s.y) * Math.min(dt * 0.8, 1);
+      // the easing lags the target, so clamp the eased height too: a falling
+      // tide or the trough of a passing swell must not float the dorsal out,
+      // and a shoaling floor must not come up through the belly
+      s.y = holdUnder(s.y, x, z, g, s.body, s.size);
 
-      const mvx = x - s.px, mvy = s.y - s.py, mvz = z - s.pz;
+      const mvy = s.y - s.py;
       let dYaw = 0;
-      if (mvx * mvx + mvz * mvz > 1e-9) {
+      if (mvh * mvh > 1e-9) {
         const targetYaw = Math.atan2(-mvz, mvx);
         let d = targetYaw - s.yaw;
         d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -343,8 +398,7 @@ function makeSharks(rand) {
 
       // the tail beats at whatever pace it is actually making ground at, so
       // the shove away from the diver reads as a burst
-      const gait = THREE.MathUtils.clamp(
-        Math.hypot(mvx, mvz) / Math.max(dt, 1e-4) / speed, 0.45, 2.2);
+      const gait = THREE.MathUtils.clamp(mvh / Math.max(dt, 1e-4) / speed, 0.45, 2.2);
       s.beat += dt * 0.62 * gait * s.rate;
       if (pd < 26 || (s.frame++ & 3) === 0) s.rig.update(s.beat, 0.82 + 0.22 * gait);
     }
@@ -363,6 +417,12 @@ function makeRays(rand, meadows) {
   const n = 2 + (rand() < 0.5 ? 1 : 0);
   const geo = rayGeometry();
   wigAttribute(geo, n, rand);
+  // the wings flap in the vertex shader, which carries the tips past the rest
+  // pose the bounding box sees, hence the pad
+  const body = bodyFromGeometry(geo, 0.2, 0.04);
+  // a settled ray is meant to be in the sand, all but its eyes, so that pose
+  // gets a body with no belly to keep clear
+  const settled = swimBody(body.rise, 0, 0);
   const wig = geo.getAttribute('aWig');
   const inst = new THREE.InstancedMesh(geo, rayMaterial(), n);
   inst.frustumCulled = false;
@@ -387,6 +447,7 @@ function makeRays(rand, meadows) {
     return { x: meadows[0]?.x ?? 40, z: meadows[0]?.z ?? 0 };
   };
 
+  const deeper = new THREE.Vector2();
   const rays = [];
   for (let i = 0; i < n; i++) {
     const s = pickSpot();
@@ -413,10 +474,23 @@ function makeRays(rand, meadows) {
       r.burst = Math.max(r.burst - dt, 0);
 
       const g = islandHeight(r.x, r.z);
+      // the flats end somewhere, and the tide drains them: a ray with the water
+      // running out over it stops browsing and scoots down the slope, rather
+      // than gliding on up the bar with the clamp pressing it into the sand. A
+      // gliding ray is slow and turns slowly, so this has to fire while there
+      // is still room, not once there is none.
+      if (swimRoom(r.x, r.z, g, body, r.size) < 0.4) {
+        deeperDir(r.x, r.z, deeper);
+        r.target = { x: r.x + deeper.x * 12, z: r.z + deeper.y * 12 };
+        r.mode = 'glide';
+        r.modeT = Math.max(r.modeT, 8);
+        r.burst = Math.max(r.burst, 0.9);
+      }
       if (r.mode === 'settle') {
         // buried in the sand but for the eyes, wings barely stirring
         wig.setY(i, 0.12);
-        r.y += ((g + 0.06) - r.y) * Math.min(dt * 2, 1);
+        r.y += (holdUnder(g + 0.06, r.x, r.z, g, settled, r.size) - r.y)
+          * Math.min(dt * 2, 1);
         if (r.modeT <= 0) {
           r.mode = 'glide';
           r.modeT = 10 + rand() * 14;
@@ -441,7 +515,8 @@ function makeRays(rand, meadows) {
           if (r.modeT <= 0) { r.target = pickSpot(); r.modeT = 10 + rand() * 14; }
         }
         const wantY = g + 0.32 + Math.sin(t * 0.7 + i * 2.6) * 0.08 + r.burst * 0.3;
-        r.y += (Math.min(wantY, uniforms.uTide.value - 0.5) - r.y) * Math.min(dt * 1.5, 1);
+        r.y += (holdUnder(wantY, r.x, r.z, g, body, r.size) - r.y) * Math.min(dt * 1.5, 1);
+        r.y = holdUnder(r.y, r.x, r.z, g, body, r.size);
       }
       composeFish(inst, i, r.x, r.y, r.z, r.yaw, r.pitch, 0, r.size);
     }
@@ -469,14 +544,31 @@ function makeTurtles(rand) {
     return { x: 60, z: 0 };
   };
 
+  const _box = new THREE.Box3();
   for (let i = 0; i < n; i++) {
     const parts = buildSwimTurtleMesh(subSeed('swimTurtle' + i));
+    // how tall this turtle ever gets, measured rather than guessed: pose it at
+    // the top of the flipper stroke (the update below drives the same limbs, so
+    // the pose is thrown away next frame) and allow for the nose lifting as it
+    // pitches into a climb
+    parts.frontL.rotation.set(0, -0.35, 0.55);
+    parts.frontR.rotation.set(0, 0.35, -0.55);
+    parts.backL.rotation.z = 0.25;
+    parts.backR.rotation.z = -0.25;
+    parts.head.position.y = 0.1;
+    _box.setFromObject(parts.group);
+    const pitchLift = Math.max(_box.max.x, -_box.min.x) * Math.sin(0.45);
     const s = pickTarget();
+    const scale = 1.05 + rand() * 0.3;
     parts.group.position.set(s.x, islandHeight(s.x, s.z) + 1.5, s.z);
-    parts.group.scale.setScalar(1.05 + rand() * 0.3);
+    parts.group.scale.setScalar(scale);
     group.add(parts.group);
     turtles.push({
       parts,
+      scale,
+      body: swimBody(_box.max.y + pitchLift, -_box.min.y, 0.35),
+      // up for air it rides awash on purpose, head clear of the water
+      bodyUp: swimBody(0.12, -_box.min.y, 0.1),
       target: pickTarget(),
       mode: 'cruise',
       breatheIn: 40 + rand() * 60,
@@ -489,7 +581,8 @@ function makeTurtles(rand) {
     });
   }
 
-  const _quat = new THREE.Quaternion(), _qp2 = new THREE.Quaternion();
+  const _quat = new THREE.Quaternion(), _qp2 = new THREE.Quaternion(),
+    deeper = new THREE.Vector2();
   function update(t, dt, player) {
     const tide = uniforms.uTide.value;
     for (const tu of turtles) {
@@ -503,20 +596,37 @@ function makeTurtles(rand) {
 
       let wantY;
       const ground = islandHeight(p.x, p.z);
-      if (tu.mode === 'breathe') {
-        wantY = tide - 0.12 + Math.sin(t * 1.1) * 0.05;
-        if (tu.modeT > 4) {
-          tu.mode = 'cruise';
-          tu.modeT = 0;
-          tu.breatheIn = 50 + rand() * 60;
-          tu.target = pickTarget();
-        }
-      } else if (tu.breatheIn <= 0) {
-        wantY = tide - 0.12;
-        if (p.y > tide - 0.3) { tu.mode = 'breathe'; tu.modeT = 0; }
+      // a turtle on its way up for air is allowed right up against the surface;
+      // a cruising one keeps the whole carapace under. Either way the swell,
+      // not a sine, does the bobbing.
+      const surfacing = tu.mode === 'breathe' || tu.breatheIn <= 0;
+      const body = surfacing ? tu.bodyUp : tu.body;
+      if (surfacing) {
+        wantY = holdUnder(tide + 1, p.x, p.z, ground, body, tu.scale);
+        if (tu.mode === 'breathe') {
+          if (tu.modeT > 4) {
+            tu.mode = 'cruise';
+            tu.modeT = 0;
+            tu.breatheIn = 50 + rand() * 60;
+            tu.target = pickTarget();
+          }
+        } else if (p.y > wantY - 0.18) { tu.mode = 'breathe'; tu.modeT = 0; }
       } else {
-        wantY = THREE.MathUtils.clamp(
-          ground + 0.9 + Math.sin(t * 0.2 + tu.gait) * 0.5, ground + 0.6, tide - 0.7);
+        wantY = holdUnder(ground + 0.9 + Math.sin(t * 0.2 + tu.gait) * 0.5,
+          p.x, p.z, ground, body, tu.scale);
+      }
+
+      // a target picked in deep water can still lie past a bar or a headland, so
+      // a turtle with the water running out over it turns down the slope and
+      // heads back out, sliding that way meanwhile: its own turn is slow enough
+      // that steering alone would leave it scraping along the bottom
+      if (swimRoom(p.x, p.z, ground, tu.body, tu.scale) < 0.35) {
+        deeperDir(p.x, p.z, deeper);
+        if (deeper.x || deeper.y) {
+          tu.target = { x: p.x + deeper.x * 18, z: p.z + deeper.y * 18 };
+          p.x += deeper.x * 1.2 * dt;
+          p.z += deeper.y * 1.2 * dt;
+        }
       }
 
       const dx = tu.target.x - p.x, dz = tu.target.z - p.z;
@@ -531,6 +641,8 @@ function makeTurtles(rand) {
       p.z += Math.sin(tu.yaw) * spd * dt;
       tu.vy = (wantY - p.y) * Math.min(dt * 0.7, 1);
       p.y += tu.vy;
+      // the easing lags: hold the eased height inside the water column too
+      p.y = holdUnder(p.y, p.x, p.z, ground, body, tu.scale);
 
       // flippers fly like slow wings; harder when scared
       tu.gait += dt * (tu.mode === 'breathe' ? 1.1 : tu.scared > 0 ? 4.4 : 2.4);
@@ -558,6 +670,10 @@ function makeTurtles(rand) {
 // ---------------------------------------------------------------- jellies
 function makeJellies(rand) {
   const geo = jellyGeometry();
+  // measured by the bell: the fringe and the oral arms trail, and are meant to
+  // sweep the sand rather than hold the jelly off it. The extra over the crown
+  // is the hand's width of water moon jellies hang under rather than against.
+  const body = swimBody(JELLY_BELL.up + 0.15, JELLY_BELL.down, 0.5);
   const N = 9;
   const ph = new Float32Array(N);
   for (let i = 0; i < N; i++) ph[i] = rand() * Math.PI * 2;
@@ -588,7 +704,6 @@ function makeJellies(rand) {
     });
   }
   function update(t, dt) {
-    const tide = uniforms.uTide.value;
     for (let i = 0; i < N; i++) {
       const j = jellies[i];
       const pulse = Math.sin(t * 1.7 + j.ph);
@@ -596,9 +711,7 @@ function makeJellies(rand) {
       j.x += Math.cos(j.da) * j.drift * dt;
       j.z += Math.sin(j.da) * j.drift * dt;
       const g = islandHeight(j.x, j.z);
-      // in the shallows the ceiling wins: better a jelly brushing the sand
-      // than a bell poking out of the sea
-      j.y = THREE.MathUtils.clamp(j.y, Math.min(g + 0.8, tide - 0.5), tide - 0.45);
+      j.y = holdUnder(j.y, j.x, j.z, g, body, j.size);
       if (g > -1.2) { // drifted into the surf line: let the current carry it out
         const az = Math.atan2(j.z, j.x);
         j.x += Math.cos(az) * dt * 0.5;

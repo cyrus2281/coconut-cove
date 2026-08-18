@@ -48,6 +48,57 @@ function buildDiskGeometry() {
   return geo;
 }
 
+// The swell: direction (xz), amplitude (m), wavelength (m) and the extra
+// amplitude trim the shader applies at the call. This table is the single
+// source of truth for the wave shape — the GLSL consts below are printed from
+// it, and seaSurfaceY() sums the same four waves on the CPU so everything that
+// swims can be held under the water the shader actually draws.
+const SWELL = [
+  { dir: [1.0, 0.25], amp: 0.25, len: 33.0, scale: 1.0 },
+  { dir: [0.72, 0.62], amp: 0.14, len: 17.0, scale: 1.0 },
+  { dir: [-0.28, 0.94], amp: 0.08, len: 8.5, scale: 1.0 },
+  { dir: [0.55, -0.80], amp: 0.045, len: 4.7, scale: 0.8 },
+];
+const STEEP = 0.62;
+const wavesGLSL = SWELL.map((w) => [w.dir[0], w.dir[1], w.amp, w.len]
+  .map((v) => v.toFixed(3)).join(', '));
+// what the CPU twin needs, worked out once: unit direction, wavenumber and
+// the deep-water phase speed
+for (const w of SWELL) {
+  const dl = Math.hypot(w.dir[0], w.dir[1]);
+  w.dx = w.dir[0] / dl;
+  w.dz = w.dir[1] / dl;
+  w.k = 6.28318 / w.len;
+  w.c = Math.sqrt(9.8 / w.k);
+}
+
+// Waves flatten as the water shallows and fade out before the mesh grows too
+// sparse to resolve them — mirrors ampScale in the vertex shader below.
+function swellScale(x, z, depth) {
+  const shallow = THREE.MathUtils.clamp(depth / 1.8, 0.1, 1.0);
+  return shallow * (1 - THREE.MathUtils.smoothstep(Math.hypot(x, z), 150.0, 220.0));
+}
+
+// Height of the sea surface over (x, z) right now, given the terrain height
+// there: mean level + tide + the Gerstner sum, the CPU twin of the vertex
+// shader's displacement. Only the vertical term is mirrored; the horizontal
+// roll of a Gerstner crest slides a vertex sideways, which matters to how the
+// swell looks and not to the question this answers — where the underside of
+// the water is. The nearshore swash lift is left out too, which only ever
+// raises the surface, so a clearance measured from here stays honest.
+export function seaSurfaceY(x, z, ground) {
+  const tide = uniforms.uTide.value;
+  const ampScale = swellScale(x, z, tide - ground);
+  const t = uniforms.uTime.value;
+  let y = tide;
+  for (let i = 0; i < SWELL.length; i++) {
+    const w = SWELL[i];
+    y += w.amp * w.scale * ampScale
+      * Math.sin(w.k * (w.dx * x + w.dz * z - w.c * t));
+  }
+  return y;
+}
+
 const VERT = /* glsl */ `
 uniform float uTime;
 uniform float uTide;
@@ -69,12 +120,11 @@ float terrainH(vec2 p) {
   return texture2D(uHeight, p / (2.0 * uHmapHalf) + 0.5).r;
 }
 
-// direction (xy), amplitude, wavelength
-const vec4 W0 = vec4(1.0, 0.25, 0.25, 33.0);
-const vec4 W1 = vec4(0.72, 0.62, 0.14, 17.0);
-const vec4 W2 = vec4(-0.28, 0.94, 0.08, 8.5);
-const vec4 W3 = vec4(0.55, -0.80, 0.045, 4.7);
-const float STEEP = 0.62;
+const vec4 W0 = vec4(${wavesGLSL[0]});
+const vec4 W1 = vec4(${wavesGLSL[1]});
+const vec4 W2 = vec4(${wavesGLSL[2]});
+const vec4 W3 = vec4(${wavesGLSL[3]});
+const float STEEP = ${STEEP.toFixed(2)};
 
 void gerstner(vec4 w, vec2 p, float t, float ampScale, inout vec3 disp, inout vec3 nrm) {
   vec2 dir = normalize(w.xy);
@@ -106,10 +156,10 @@ void main() {
 
   vec3 disp = vec3(0.0);
   vec3 nrm = vec3(0.0, 1.0, 0.0);
-  gerstner(W0, wp.xz, uTime, ampScale, disp, nrm);
-  gerstner(W1, wp.xz, uTime, ampScale, disp, nrm);
-  gerstner(W2, wp.xz, uTime, ampScale, disp, nrm);
-  gerstner(W3, wp.xz, uTime, ampScale * 0.8, disp, nrm);
+  gerstner(W0, wp.xz, uTime, ampScale * ${SWELL[0].scale.toFixed(2)}, disp, nrm);
+  gerstner(W1, wp.xz, uTime, ampScale * ${SWELL[1].scale.toFixed(2)}, disp, nrm);
+  gerstner(W2, wp.xz, uTime, ampScale * ${SWELL[2].scale.toFixed(2)}, disp, nrm);
+  gerstner(W3, wp.xz, uTime, ampScale * ${SWELL[3].scale.toFixed(2)}, disp, nrm);
 
   wp += disp;
 

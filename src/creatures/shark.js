@@ -584,5 +584,13 @@ export function buildShark() {
   }
 
   update(0, 1);
-  return { group, update };
+  // How far the animal reaches above and below its spine in the rest pose, in
+  // metres at scale 1. The brains hold their swimming height between the sea
+  // surface and the sand (see world/swim.js), and a shark's position is its
+  // spine, not its back or its belly, so they need this to know what to spare.
+  // Measured, not written down, so it follows the fins if the profiles change.
+  const box = new THREE.Box3().setFromObject(group);
+  const extent = { up: box.max.y, down: -box.min.y };
+  bodyGeo.boundingBox = null; // measured off the rest pose: do not let it cache
+  return { group, update, extent };
 }
