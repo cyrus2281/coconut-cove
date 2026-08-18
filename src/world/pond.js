@@ -96,7 +96,7 @@ void main() {
 
 // one ring mesh per basin; every pond shares the one material (the shader
 // bakes depth per vertex, so it never needs to know which pond it shades)
-function pondGeometry(L) {
+export function pondGeometry(L) {
   // concentric rings, denser toward the rim where the waterline lives
   const RINGS = 30, SEGS = 84;
   const pos = [], depth = [], idx = [];
@@ -132,10 +132,24 @@ export function buildPond() {
   const lagoons = lagoonsInfo();
   if (!lagoons.length) return { group, material: null };
 
+  const material = pondMaterial();
+
+  for (const L of lagoons) {
+    const mesh = new THREE.Mesh(pondGeometry(L), material);
+    mesh.name = 'pondSurface';
+    mesh.renderOrder = 1;
+    group.add(mesh);
+  }
+  return { group, material };
+}
+
+// The still-water shader every basin shares: sky reflection over a thin
+// green body, wind ripple, rain dimples, and a soft alpha ramp at the rim.
+export function pondMaterial() {
   const ripple = foamTexture();
   ripple.wrapS = ripple.wrapT = THREE.RepeatWrapping;
 
-  const material = new THREE.ShaderMaterial({
+  return new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
@@ -157,12 +171,4 @@ export function buildPond() {
       uRipple: { value: ripple },
     },
   });
-
-  for (const L of lagoons) {
-    const mesh = new THREE.Mesh(pondGeometry(L), material);
-    mesh.name = 'pondSurface';
-    mesh.renderOrder = 1;
-    group.add(mesh);
-  }
-  return { group, material };
 }

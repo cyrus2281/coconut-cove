@@ -458,6 +458,114 @@ function clamMantleTexture() {
 }
 
 // ------------------------------------------------------------------ build
+export const FAN_TINTS = [[0.85, 0.3, 0.45], [0.9, 0.5, 0.2], [0.6, 0.35, 0.8], [0.92, 0.75, 0.3]];
+export const SPONGE_TINTS = [[0.62, 0.5, 0.95], [0.95, 0.75, 0.35], [0.9, 0.45, 0.4]];
+export const STAR_TINTS = [[0.95, 0.42, 0.2], [0.35, 0.5, 0.95], [0.9, 0.3, 0.5]];
+export const ANEM_TINTS = [[1.0, 0.85, 1.0], [0.75, 1.0, 0.85], [1.0, 0.95, 0.7]];
+
+// Everything the beds plant, by name. buildReef() instances the whole set;
+// the /components viewer asks for one kind at a time.
+export const REEF_KINDS = [
+  'rock', 'brain', 'stagA', 'stagB', 'table', 'fan',
+  'sponge', 'anemone', 'urchin', 'star', 'grass',
+];
+
+export function reefGeometry(kind) {
+  switch (kind) {
+    case 'rock': return rockGeo(subSeed('reefRock'));
+    case 'brain': return brainGeo(subSeed('reefBrain'));
+    case 'stagA': return stagGeo(subSeed('reefStagA'),
+      new THREE.Color(0.62, 0.4, 0.26), new THREE.Color(0.88, 0.72, 0.5));
+    case 'stagB': return stagGeo(subSeed('reefStagB'),
+      new THREE.Color(0.34, 0.22, 0.48), new THREE.Color(0.72, 0.5, 0.88));
+    case 'table': return tableGeo(subSeed('reefTable'));
+    case 'fan': {
+      const g = new THREE.PlaneGeometry(1.3, 1.1, 8, 6);
+      g.translate(0, 0.55, 0);
+      return g;
+    }
+    case 'sponge': return spongeGeo(subSeed('reefSponge'));
+    case 'anemone': return anemoneGeo(subSeed('reefAnem'));
+    case 'urchin': return urchinGeo(subSeed('reefUrchin'));
+    case 'star': return starGeo();
+    case 'grass': return grassGeo(subSeed('reefGrass'));
+    default: throw new Error('unknown reef kind: ' + kind);
+  }
+}
+
+// Every reef material wears the underwater treatment; the fan, the anemone
+// and the seagrass also rock in the current.
+export function reefMaterial(kind) {
+  const vertexMat = (name, opts = {}, patch = {}) => uwPatch(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.85, metalness: 0.0, ...opts,
+  }), name, patch);
+
+  switch (kind) {
+    case 'rock': return vertexMat('rock');
+    case 'brain': return uwPatch(new THREE.MeshStandardMaterial({
+      map: brainTexture(), roughness: 0.9,
+    }), 'brain');
+    case 'stagA': return vertexMat('stagA');
+    case 'stagB': return vertexMat('stagB');
+    case 'table': return vertexMat('table');
+    case 'fan': return uwPatch(new THREE.MeshStandardMaterial({
+      map: fanTexture(), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8,
+    }), 'fan', { sway: 0.5, swaySpeed: 0.8 });
+    case 'sponge': return uwPatch(new THREE.MeshStandardMaterial({
+      map: spongeTexture(), roughness: 0.92,
+    }), 'sponge');
+    case 'anemone': return vertexMat('anemone', { roughness: 0.6 }, { sway: 3.2, swaySpeed: 1.6 });
+    case 'urchin': return vertexMat('urchin', { roughness: 0.5 });
+    case 'star': return uwPatch(new THREE.MeshStandardMaterial({
+      map: starTexture(), roughness: 0.8,
+    }), 'star');
+    case 'grass': return vertexMat('grass', { side: THREE.DoubleSide }, { sway: 1.4, swaySpeed: 1.1 });
+    default: throw new Error('unknown reef kind: ' + kind);
+  }
+}
+
+const byKind = (fn) => Object.fromEntries(REEF_KINDS.map((k) => [k, fn(k)]));
+
+// A giant clam of half-width `s`: a cupped bottom shell, a hinged lid, and
+// the iridescent mantle between them. update() in buildReef swings the lid.
+export function clamAssets() {
+  return {
+    shellGeo: clamShellGeo(),
+    shellMat: uwPatch(new THREE.MeshStandardMaterial({
+      map: clamShellTexture(), roughness: 0.8,
+    }), 'clamshell'),
+    mantleMat: uwPatch(new THREE.MeshStandardMaterial({
+      map: clamMantleTexture(), roughness: 0.4,
+      emissive: new THREE.Color(0.04, 0.22, 0.24),
+    }), 'clammantle'),
+  };
+}
+
+export function clamRig(s, { shellGeo, shellMat, mantleMat }) {
+  const g = new THREE.Group();
+  const bottom = new THREE.Mesh(shellGeo, shellMat);
+  bottom.scale.set(s, s, s * 0.9);
+  bottom.rotation.x = Math.PI; // cupped upward
+  bottom.position.y = s * 0.45;
+  g.add(bottom);
+  const lid = new THREE.Group();
+  lid.position.set(-s, s * 0.45, 0); // hinge at the back lip
+  const top = new THREE.Mesh(shellGeo, shellMat);
+  top.scale.set(s, s, s * 0.9);
+  top.position.x = s;
+  lid.add(top);
+  g.add(lid);
+  const mantle = new THREE.Mesh(
+    new THREE.TorusGeometry(s * 0.72, s * 0.17, 7, 22),
+    mantleMat
+  );
+  mantle.rotation.x = -Math.PI / 2;
+  mantle.position.y = s * 0.5;
+  mantle.scale.z = 0.55;
+  g.add(mantle);
+  return { g, lid, mantle };
+}
+
 export function buildReef() {
   const group = new THREE.Group();
   group.name = 'reef';
@@ -517,11 +625,6 @@ export function buildReef() {
       fn(x, islandHeight(x, z), z);
     }
   };
-
-  const FAN_TINTS = [[0.85, 0.3, 0.45], [0.9, 0.5, 0.2], [0.6, 0.35, 0.8], [0.92, 0.75, 0.3]];
-  const SPONGE_TINTS = [[0.62, 0.5, 0.95], [0.95, 0.75, 0.35], [0.9, 0.45, 0.4]];
-  const STAR_TINTS = [[0.95, 0.42, 0.2], [0.35, 0.5, 0.95], [0.9, 0.3, 0.5]];
-  const ANEM_TINTS = [[1.0, 0.85, 1.0], [0.75, 1.0, 0.85], [1.0, 0.95, 0.7]];
 
   for (const cl of clusters) {
     // a mounded core of boulders the corals colonize…
@@ -610,45 +713,8 @@ export function buildReef() {
   }
 
   // ---- materials ----
-  const vertexMat = (name, opts = {}, patch = {}) => uwPatch(new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.85, metalness: 0.0, ...opts,
-  }), name, patch);
-
-  const mats = {
-    rock: vertexMat('rock'),
-    brain: uwPatch(new THREE.MeshStandardMaterial({ map: brainTexture(), roughness: 0.9 }), 'brain'),
-    stagA: vertexMat('stagA'),
-    stagB: vertexMat('stagB'),
-    table: vertexMat('table'),
-    fan: uwPatch(new THREE.MeshStandardMaterial({
-      map: fanTexture(), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8,
-    }), 'fan', { sway: 0.5, swaySpeed: 0.8 }),
-    sponge: uwPatch(new THREE.MeshStandardMaterial({ map: spongeTexture(), roughness: 0.92 }), 'sponge'),
-    anemone: vertexMat('anemone', { roughness: 0.6 }, { sway: 3.2, swaySpeed: 1.6 }),
-    urchin: vertexMat('urchin', { roughness: 0.5 }),
-    star: uwPatch(new THREE.MeshStandardMaterial({ map: starTexture(), roughness: 0.8 }), 'star'),
-    grass: vertexMat('grass', { side: THREE.DoubleSide }, { sway: 1.4, swaySpeed: 1.1 }),
-  };
-
-  const geos = {
-    rock: rockGeo(subSeed('reefRock')),
-    brain: brainGeo(subSeed('reefBrain')),
-    stagA: stagGeo(subSeed('reefStagA'),
-      new THREE.Color(0.62, 0.4, 0.26), new THREE.Color(0.88, 0.72, 0.5)),
-    stagB: stagGeo(subSeed('reefStagB'),
-      new THREE.Color(0.34, 0.22, 0.48), new THREE.Color(0.72, 0.5, 0.88)),
-    table: tableGeo(subSeed('reefTable')),
-    fan: (() => {
-      const g = new THREE.PlaneGeometry(1.3, 1.1, 8, 6);
-      g.translate(0, 0.55, 0);
-      return g;
-    })(),
-    sponge: spongeGeo(subSeed('reefSponge')),
-    anemone: anemoneGeo(subSeed('reefAnem')),
-    urchin: urchinGeo(subSeed('reefUrchin')),
-    star: starGeo(),
-    grass: grassGeo(subSeed('reefGrass')),
-  };
+  const mats = byKind(reefMaterial);
+  const geos = byKind(reefGeometry);
 
   const _c = new THREE.Color();
   for (const [kind, list] of Object.entries(kinds)) {
@@ -669,14 +735,7 @@ export function buildReef() {
   // ---- giant clams: individual, so they can snap shut when you loom ----
   const clams = [];
   {
-    const shellGeo = clamShellGeo();
-    const shellMat = uwPatch(new THREE.MeshStandardMaterial({
-      map: clamShellTexture(), roughness: 0.8,
-    }), 'clamshell');
-    const mantleMat = uwPatch(new THREE.MeshStandardMaterial({
-      map: clamMantleTexture(), roughness: 0.4,
-      emissive: new THREE.Color(0.04, 0.22, 0.24),
-    }), 'clammantle');
+    const assets = clamAssets();
     let placedClams = 0;
     for (let i = 0; i < 30 && placedClams < 3; i++) {
       const cl = clusters[Math.floor(rand() * clusters.length)];
@@ -685,28 +744,8 @@ export function buildReef() {
       const rr = Math.sqrt(rand()) * cl.r * 0.7;
       const x = cl.x + Math.cos(a) * rr, z = cl.z + Math.sin(a) * rr;
       const y = islandHeight(x, z);
-      const g = new THREE.Group();
       const s = 0.35 + rand() * 0.25;
-      const bottom = new THREE.Mesh(shellGeo, shellMat);
-      bottom.scale.set(s, s, s * 0.9);
-      bottom.rotation.x = Math.PI; // cupped upward
-      bottom.position.y = s * 0.45;
-      g.add(bottom);
-      const lid = new THREE.Group();
-      lid.position.set(-s, s * 0.45, 0); // hinge at the back lip
-      const top = new THREE.Mesh(shellGeo, shellMat);
-      top.scale.set(s, s, s * 0.9);
-      top.position.x = s;
-      lid.add(top);
-      g.add(lid);
-      const mantle = new THREE.Mesh(
-        new THREE.TorusGeometry(s * 0.72, s * 0.17, 7, 22),
-        mantleMat
-      );
-      mantle.rotation.x = -Math.PI / 2;
-      mantle.position.y = s * 0.5;
-      mantle.scale.z = 0.55;
-      g.add(mantle);
+      const { g, lid, mantle } = clamRig(s, assets);
       g.position.set(x, y - 0.03, z);
       g.rotation.y = rand() * Math.PI * 2;
       group.add(g);

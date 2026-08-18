@@ -19,6 +19,25 @@ const GRAV = 16;
 // anything on the ground takes the kick.
 const N_NUTS = 12;
 
+// One nut: a squashed husk-mapped sphere, tinted somewhere between green
+// and weathered brown. The beach gets a dozen; the /components viewer
+// builds a single one to look at.
+export function nutMesh(rand = Math.random, geo = null, tex = null) {
+  const r = 0.115 + rand() * 0.03;
+  const mesh = new THREE.Mesh(
+    geo ?? new THREE.SphereGeometry(1, 12, 9),
+    new THREE.MeshStandardMaterial({
+      map: tex ?? huskTexture(),
+      roughness: 0.9,
+      color: new THREE.Color().setHSL(0.09 + rand() * 0.03, 0.35 + rand() * 0.2, 0.32 + rand() * 0.1),
+    })
+  );
+  mesh.scale.setScalar(r).multiply(new THREE.Vector3(1, 0.86, 1));
+  mesh.castShadow = true;
+  mesh.rotation.set(rand() * 6.3, rand() * 6.3, 0);
+  return { mesh, r };
+}
+
 export function buildCoconuts(player, trees, audio) {
   const group = new THREE.Group();
   group.name = 'coconuts';
@@ -34,17 +53,8 @@ export function buildCoconuts(player, trees, audio) {
     const d = 1.2 + rand() * 3.2;
     const x = t.base.x + Math.cos(a) * d;
     const z = t.base.z + Math.sin(a) * d;
-    const r = 0.115 + rand() * 0.03;
-    const mat = new THREE.MeshStandardMaterial({
-      map: tex,
-      roughness: 0.9,
-      color: new THREE.Color().setHSL(0.09 + rand() * 0.03, 0.35 + rand() * 0.2, 0.32 + rand() * 0.1),
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.scale.setScalar(r).multiply(new THREE.Vector3(1, 0.86, 1));
-    mesh.castShadow = true;
+    const { mesh, r } = nutMesh(rand, geo, tex);
     mesh.position.set(x, islandHeight(x, z) + r * 0.8, z);
-    mesh.rotation.set(rand() * 6.3, rand() * 6.3, 0);
     group.add(mesh);
     nuts.push({
       mesh, r,

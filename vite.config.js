@@ -21,7 +21,8 @@ function componentsRoute() {
 
 export default defineConfig({
   server: {
-    port: 5173,
+    // 5173 by default; PORT lets a second instance run alongside the first
+    port: Number(process.env.PORT) || 5173,
     strictPort: true,
   },
   plugins: [componentsRoute()],

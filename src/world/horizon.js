@@ -14,6 +14,9 @@ import { cloudTexture, glowDotTexture } from '../core/textures.js';
 
 const SKIRT = -10; // island bases start below the swell
 
+// smoke column: puff lifetime (s), rise rate and downwind drift (m/s)
+const LIFE = 30, RISE = 13, DRIFT = 8;
+
 const sstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
   return t * t * (3 - 2 * t);
@@ -22,7 +25,7 @@ const sstep = (a, b, x) => {
 // Revolve a radius/height profile, then rough it up: low-order radial lobes
 // so nothing is a perfect cone, plus an optional blown-out notch in a
 // volcano's rim. Colors are painted per vertex from the final heights.
-function landform(profile, x, z, wobbles, colorOf, notch) {
+export function landform(profile, x, z, wobbles, colorOf, notch) {
   const geo = new THREE.LatheGeometry(profile, 56);
   const pos = geo.attributes.position;
   const col = new Float32Array(pos.count * 3);
@@ -48,6 +51,151 @@ function landform(profile, x, z, wobbles, colorOf, notch) {
   return geo;
 }
 
+// The far scenery all shares one vertex-colored, matte material.
+export function landformMaterial() {
+  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+}
+
+// One stratovolcano: a concave flank up to a cratered summit, wobbled off
+// round, with a bite blown out of the rim. Painted in bands — sand skirt,
+// forest flank, bare basalt, pale ash gullies, dark throat.
+export function volcanoCone(rand, { x = 0, z = 0, shrink = 1 } = {}) {
+  const R = (350 + rand() * 80) * shrink;
+  const H = (210 + rand() * 55) * shrink;
+  const rCr = R * 0.16;
+  const dep = H * 0.10;
+  const pts = [new THREE.Vector2(R, SKIRT)];
+  for (let k = 1; k <= 10; k++) {
+    const tt = k / 10; // concave stratovolcano flank
+    pts.push(new THREE.Vector2(rCr + (R - rCr) * Math.pow(1 - tt, 1.65), SKIRT + (H - SKIRT) * tt));
+  }
+  pts.push(new THREE.Vector2(rCr * 0.55, H - dep * 0.7));
+  pts.push(new THREE.Vector2(rCr * 0.2, H - dep));
+  pts.push(new THREE.Vector2(0.01, H - dep));
+  const grnP = rand() * 6.3, ashP = rand() * 6.3;
+  const _v = new THREE.Color();
+  const geo = landform(
+    pts, x, z,
+    [[2, 0.05 + rand() * 0.03, rand() * 6.3], [5, 0.03 + rand() * 0.02, rand() * 6.3]],
+    (y, ang, c) => {
+      if (y > H - dep * 1.4 && Math.abs(y - H) < dep * 1.6) {
+        // near the rim
+        c.setRGB(0.20, 0.18, 0.175);
+      } else {
+        c.setRGB(0.74, 0.68, 0.52); // sand skirt
+        _v.setRGB(0.17, 0.29, 0.17).multiplyScalar(0.85 + 0.3 * (0.5 + 0.5 * Math.sin(ang * 3.1 + grnP)));
+        c.lerp(_v, sstep(0.8, 8, y));                    // forest flank
+        _v.setRGB(0.30, 0.27, 0.255);
+        c.lerp(_v, sstep(H * 0.22, H * 0.45, y));        // bare basalt
+        const streak = Math.pow(Math.max(Math.sin(ang * 9 + ashP), 0), 3) * sstep(H * 0.4, H * 0.85, y);
+        _v.setRGB(0.45, 0.43, 0.415);
+        c.lerp(_v, streak * 0.5);                        // pale ash gullies
+      }
+      if (y < H - dep * 0.5 && y > H - dep * 1.2) c.setRGB(0.10, 0.075, 0.06); // crater throat
+    },
+    { az: rand() * Math.PI * 2, depth: H * 0.055, from: H * 0.8, to: H * 0.97 }
+  );
+  return { geo, x, z, R, H, rCr };
+}
+
+// A low sister island: a rounded dome with a beach ring and a jungle crown.
+export function sisterDome(rand, { x = 0, z = 0, R, H }) {
+  const pts = [new THREE.Vector2(R, SKIRT)];
+  for (let k = 1; k <= 9; k++) {
+    const tt = k / 9; // rounded dome
+    pts.push(new THREE.Vector2(
+      Math.max(R * Math.pow(Math.cos(tt * Math.PI / 2), 0.78), 0.01),
+      SKIRT + (H - SKIRT) * Math.pow(Math.sin(tt * Math.PI / 2), 1.15)
+    ));
+  }
+  const grnP = rand() * 6.3;
+  const _v = new THREE.Color();
+  return landform(
+    pts, x, z,
+    [[2, 0.10 + rand() * 0.08, rand() * 6.3], [3, 0.07 + rand() * 0.06, rand() * 6.3],
+      [6, 0.04 + rand() * 0.03, rand() * 6.3]],
+    (y, ang, c) => {
+      c.setRGB(0.74, 0.68, 0.52); // beach ring
+      _v.setRGB(0.19, 0.32, 0.19).multiplyScalar(0.85 + 0.3 * (0.5 + 0.5 * Math.sin(ang * 2.7 + grnP)));
+      c.lerp(_v, sstep(0.7, 5, y)); // jungle crown
+    },
+    null
+  );
+}
+
+export function smokeTextures() {
+  return { smokeTexA: cloudTexture(73), smokeTexB: cloudTexture(74) };
+}
+
+// The smoke column and crater glow standing over one cone. Fills in v.puffs
+// and v.glow, and hands back the sprites for the caller to add.
+export function volcanoPlume(rand, v, { count = 6, textures = null } = {}) {
+  const { smokeTexA, smokeTexB } = textures ?? smokeTextures();
+  const sprites = [];
+  v.puffs = [];
+  for (let i = 0; i < count; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: i % 2 ? smokeTexA : smokeTexB,
+      color: new THREE.Color(0.6, 0.58, 0.57),
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      fog: true,
+    }));
+    sprites.push(s);
+    v.puffs.push({ s, off: i / count, wig: rand() * 6.3 });
+  }
+  // crater sky-glow: from sea level you can't see into the throat, so the
+  // ember light reads as a warm halo hanging just above the rim at night
+  v.glow = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glowDotTexture(),
+    color: new THREE.Color(1.0, 0.42, 0.18),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    fog: false,
+  }));
+  v.glow.scale.set(v.rCr * 3.2, v.rCr * 1.4, 1);
+  v.glow.position.set(v.x, v.H + v.rCr * 0.3, v.z);
+  sprites.push(v.glow);
+  return sprites;
+}
+
+const _smoke = new THREE.Color(), _ember = new THREE.Color();
+
+// Cycle one cone's puffs up and downwind, and light the throat after dark.
+export function updatePlume(v, t) {
+  const night = uniforms.uNightF.value;
+  const storm = uniforms.uStorm.value;
+  const wind = uniforms.uWindDir.value;
+
+  const flick = 0.72 + 0.28
+    * (0.6 * Math.sin(t * 1.9 + v.phase) + 0.4 * Math.sin(t * 4.7 + 1.3 + v.phase));
+  const puffW = v.R / 390; // the sibling's column scales with its cone
+
+  for (const p of v.puffs) {
+    const k = ((t / LIFE) + p.off) % 1;
+    const age = k * LIFE;
+    p.s.position.set(
+      v.x + wind.x * age * DRIFT + Math.sin(age * 0.5 + p.wig) * 14,
+      v.H + 4 + age * RISE * puffW,
+      v.z + wind.y * age * DRIFT + Math.cos(age * 0.4 + p.wig) * 14
+    );
+    const w = (65 + age * 6.5) * puffW;
+    p.s.scale.set(w, w * 0.9, 1);
+    const emberK = Math.max(0, 1 - k / 0.25) * night;
+    p.s.material.opacity = 0.4 * sstep(0, 0.06, k) * Math.pow(1 - k, 1.5)
+      * (1 - storm * 0.45) * (1 + emberK * 0.4);
+    // day: pale ash gray; night: near-black, except the crater-lit base
+    _smoke.setRGB(0.6, 0.58, 0.57).multiplyScalar(0.22 + 0.78 * (1 - night));
+    _ember.setRGB(1.0, 0.35, 0.16);
+    p.s.material.color.copy(_smoke).lerp(_ember, emberK * flick * 0.85);
+  }
+
+  v.glow.material.opacity = night * (0.26 + 0.12 * flick) * (1 - storm * 0.85);
+}
+
 export function buildHorizon() {
   const group = new THREE.Group();
   group.name = 'horizon';
@@ -66,8 +214,7 @@ export function buildHorizon() {
     return rand() * Math.PI * 2;
   }
 
-  const landMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
-  const _v = new THREE.Color();
+  const landMat = landformMaterial();
   const addMesh = (geo) => {
     const m = new THREE.Mesh(geo, landMat);
     group.add(m);
@@ -81,41 +228,9 @@ export function buildHorizon() {
     const vDist = 2050 + rand() * 450;
     const vx = Math.cos(vAz) * vDist, vz = Math.sin(vAz) * vDist;
     const shrink = vi === 0 ? 1 : 0.55 + rand() * 0.15;
-    const R = (350 + rand() * 80) * shrink;
-    const H = (210 + rand() * 55) * shrink;
-    const rCr = R * 0.16;
-    const dep = H * 0.10;
-    const pts = [new THREE.Vector2(R, SKIRT)];
-    for (let k = 1; k <= 10; k++) {
-      const tt = k / 10; // concave stratovolcano flank
-      pts.push(new THREE.Vector2(rCr + (R - rCr) * Math.pow(1 - tt, 1.65), SKIRT + (H - SKIRT) * tt));
-    }
-    pts.push(new THREE.Vector2(rCr * 0.55, H - dep * 0.7));
-    pts.push(new THREE.Vector2(rCr * 0.2, H - dep));
-    pts.push(new THREE.Vector2(0.01, H - dep));
-    const grnP = rand() * 6.3, ashP = rand() * 6.3;
-    addMesh(landform(
-      pts, vx, vz,
-      [[2, 0.05 + rand() * 0.03, rand() * 6.3], [5, 0.03 + rand() * 0.02, rand() * 6.3]],
-      (y, ang, c) => {
-        if (y > H - dep * 1.4 && Math.abs(y - H) < dep * 1.6) {
-          // near the rim
-          c.setRGB(0.20, 0.18, 0.175);
-        } else {
-          c.setRGB(0.74, 0.68, 0.52); // sand skirt
-          _v.setRGB(0.17, 0.29, 0.17).multiplyScalar(0.85 + 0.3 * (0.5 + 0.5 * Math.sin(ang * 3.1 + grnP)));
-          c.lerp(_v, sstep(0.8, 8, y));                    // forest flank
-          _v.setRGB(0.30, 0.27, 0.255);
-          c.lerp(_v, sstep(H * 0.22, H * 0.45, y));        // bare basalt
-          const streak = Math.pow(Math.max(Math.sin(ang * 9 + ashP), 0), 3) * sstep(H * 0.4, H * 0.85, y);
-          _v.setRGB(0.45, 0.43, 0.415);
-          c.lerp(_v, streak * 0.5);                        // pale ash gullies
-        }
-        if (y < H - dep * 0.5 && y > H - dep * 1.2) c.setRGB(0.10, 0.075, 0.06); // crater throat
-      },
-      { az: rand() * Math.PI * 2, depth: H * 0.055, from: H * 0.8, to: H * 0.97 }
-    ));
-    volcanoes.push({ x: vx, z: vz, R, H, rCr, phase: rand() * 9 });
+    const cone = volcanoCone(rand, { x: vx, z: vz, shrink });
+    addMesh(cone.geo);
+    volcanoes.push({ ...cone, geo: undefined, phase: rand() * 9 });
   }
 
   // ---- low sister islands, hull-down ----
@@ -131,97 +246,20 @@ export function buildHorizon() {
       spots.push([x0 - Math.sin(az) * r0 * 1.5, z0 + Math.cos(az) * r0 * 1.5, r0 * 0.6, h0 * 0.7]);
     }
     for (const [x0, z0, R0, H0] of spots) {
-      const pts = [new THREE.Vector2(R0, SKIRT)];
-      for (let k = 1; k <= 9; k++) {
-        const tt = k / 9; // rounded dome
-        pts.push(new THREE.Vector2(
-          Math.max(R0 * Math.pow(Math.cos(tt * Math.PI / 2), 0.78), 0.01),
-          SKIRT + (H0 - SKIRT) * Math.pow(Math.sin(tt * Math.PI / 2), 1.15)
-        ));
-      }
-      const grnP = rand() * 6.3;
-      addMesh(landform(
-        pts, x0, z0,
-        [[2, 0.10 + rand() * 0.08, rand() * 6.3], [3, 0.07 + rand() * 0.06, rand() * 6.3],
-          [6, 0.04 + rand() * 0.03, rand() * 6.3]],
-        (y, ang, c) => {
-          c.setRGB(0.74, 0.68, 0.52); // beach ring
-          _v.setRGB(0.19, 0.32, 0.19).multiplyScalar(0.85 + 0.3 * (0.5 + 0.5 * Math.sin(ang * 2.7 + grnP)));
-          c.lerp(_v, sstep(0.7, 5, y)); // jungle crown
-        },
-        null
-      ));
+      addMesh(sisterDome(rand, { x: x0, z: z0, R: R0, H: H0 }));
     }
   }
 
   // ---- smoke columns + crater glows, one set per volcano ----
-  const LIFE = 30, RISE = 13, DRIFT = 8;
-  const smokeTexA = cloudTexture(73), smokeTexB = cloudTexture(74);
-  const glowTex = glowDotTexture();
+  const textures = smokeTextures();
   for (const v of volcanoes) {
-    v.puffs = [];
-    const n = v === volcanoes[0] ? 6 : 4; // the sibling smokes more shyly
-    for (let i = 0; i < n; i++) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: i % 2 ? smokeTexA : smokeTexB,
-        color: new THREE.Color(0.6, 0.58, 0.57),
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        fog: true,
-      }));
-      group.add(s);
-      v.puffs.push({ s, off: i / n, wig: rand() * 6.3 });
-    }
-    // crater sky-glow: from sea level you can't see into the throat, so the
-    // ember light reads as a warm halo hanging just above the rim at night
-    v.glow = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: glowTex,
-      color: new THREE.Color(1.0, 0.42, 0.18),
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      fog: false,
-    }));
-    v.glow.scale.set(v.rCr * 3.2, v.rCr * 1.4, 1);
-    v.glow.position.set(v.x, v.H + v.rCr * 0.3, v.z);
-    group.add(v.glow);
+    // the sibling smokes more shyly
+    const count = v === volcanoes[0] ? 6 : 4;
+    for (const sprite of volcanoPlume(rand, v, { count, textures })) group.add(sprite);
   }
 
-  const _smoke = new THREE.Color(), _ember = new THREE.Color();
-
   function update(t) {
-    const night = uniforms.uNightF.value;
-    const storm = uniforms.uStorm.value;
-    const wind = uniforms.uWindDir.value;
-
-    for (const v of volcanoes) {
-      const flick = 0.72 + 0.28
-        * (0.6 * Math.sin(t * 1.9 + v.phase) + 0.4 * Math.sin(t * 4.7 + 1.3 + v.phase));
-      const puffW = v.R / 390; // the sibling's column scales with its cone
-
-      for (const p of v.puffs) {
-        const k = ((t / LIFE) + p.off) % 1;
-        const age = k * LIFE;
-        p.s.position.set(
-          v.x + wind.x * age * DRIFT + Math.sin(age * 0.5 + p.wig) * 14,
-          v.H + 4 + age * RISE * puffW,
-          v.z + wind.y * age * DRIFT + Math.cos(age * 0.4 + p.wig) * 14
-        );
-        const w = (65 + age * 6.5) * puffW;
-        p.s.scale.set(w, w * 0.9, 1);
-        const emberK = Math.max(0, 1 - k / 0.25) * night;
-        p.s.material.opacity = 0.4 * sstep(0, 0.06, k) * Math.pow(1 - k, 1.5)
-          * (1 - storm * 0.45) * (1 + emberK * 0.4);
-        // day: pale ash gray; night: near-black, except the crater-lit base
-        _smoke.setRGB(0.6, 0.58, 0.57).multiplyScalar(0.22 + 0.78 * (1 - night));
-        _ember.setRGB(1.0, 0.35, 0.16);
-        p.s.material.color.copy(_smoke).lerp(_ember, emberK * flick * 0.85);
-      }
-
-      v.glow.material.opacity = night * (0.26 + 0.12 * flick) * (1 - storm * 0.85);
-    }
+    for (const v of volcanoes) updatePlume(v, t);
   }
 
   const v0 = volcanoes[0];

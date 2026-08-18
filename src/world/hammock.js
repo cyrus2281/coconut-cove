@@ -13,36 +13,11 @@ import { hammockTexture, barkTexture } from '../core/textures.js';
 
 const EYE_LYING = 0.5; // camera above the cloth's low point
 
-export function buildHammock(player, trees, camera) {
+// The hammock itself: the draped cloth, its two ropes, and the wrap rings
+// on the trunks. buildHammock() slings this between a pair of palms; the
+// /components viewer hangs one between two anchor points of its own.
+export function hammockRig(A, B) {
   const group = new THREE.Group();
-  group.name = 'hammock';
-  const rand = mulberry32(subSeed('hammock'));
-
-  // ---- find a palm pair a hammock's length apart ----
-  let pair = null, bestScore = 1e9;
-  for (let i = 0; i < trees.length; i++) {
-    for (let j = i + 1; j < trees.length; j++) {
-      const a = trees[i].base, b = trees[j].base;
-      const d = Math.hypot(a.x - b.x, a.z - b.z);
-      if (d < 3.1 || d > 5.6) continue;
-      const score = Math.abs(d - 4.2) + rand() * 0.5;
-      if (score < bestScore) { bestScore = score; pair = [trees[i], trees[j]]; }
-    }
-  }
-  if (!pair) {
-    return { group, update: () => {}, resting: () => false, sited: false };
-  }
-
-  // anchor points ~1.55m up each trunk (palms are near-vertical that low)
-  const anchorOf = (t) => {
-    const k = Math.min(1.55 / t.height, 0.35);
-    return new THREE.Vector3(
-      t.base.x + (t.crown.x - t.base.x) * k,
-      t.base.y + (t.crown.y - t.base.y) * k,
-      t.base.z + (t.crown.z - t.base.z) * k
-    );
-  };
-  const A = anchorOf(pair[0]), B = anchorOf(pair[1]);
   const mid = A.clone().add(B).multiplyScalar(0.5);
   const axis = B.clone().sub(A);
   const span = axis.length();
@@ -101,13 +76,48 @@ export function buildHammock(player, trees, camera) {
     swing.add(rope);
   }
   // wrap rings on the trunks (static, outside the swing)
-  for (const t of pair) {
-    const anchor = anchorOf(t);
+  for (const anchor of [A, B]) {
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.20, 0.028, 6, 12), ropeMat);
     ring.position.copy(anchor);
     ring.rotation.x = Math.PI / 2;
     group.add(ring);
   }
+
+  return { group, swing, mid, yaw, perp, span, sag };
+}
+
+export function buildHammock(player, trees, camera) {
+  const group = new THREE.Group();
+  group.name = 'hammock';
+  const rand = mulberry32(subSeed('hammock'));
+
+  // ---- find a palm pair a hammock's length apart ----
+  let pair = null, bestScore = 1e9;
+  for (let i = 0; i < trees.length; i++) {
+    for (let j = i + 1; j < trees.length; j++) {
+      const a = trees[i].base, b = trees[j].base;
+      const d = Math.hypot(a.x - b.x, a.z - b.z);
+      if (d < 3.1 || d > 5.6) continue;
+      const score = Math.abs(d - 4.2) + rand() * 0.5;
+      if (score < bestScore) { bestScore = score; pair = [trees[i], trees[j]]; }
+    }
+  }
+  if (!pair) {
+    return { group, update: () => {}, resting: () => false, sited: false };
+  }
+
+  // anchor points ~1.55m up each trunk (palms are near-vertical that low)
+  const anchorOf = (t) => {
+    const k = Math.min(1.55 / t.height, 0.35);
+    return new THREE.Vector3(
+      t.base.x + (t.crown.x - t.base.x) * k,
+      t.base.y + (t.crown.y - t.base.y) * k,
+      t.base.z + (t.crown.z - t.base.z) * k
+    );
+  };
+  const rig = hammockRig(anchorOf(pair[0]), anchorOf(pair[1]));
+  const { swing, mid, yaw, perp, sag } = rig;
+  group.add(rig.group);
 
   // ---- the "lie back" prompt: a keycap hint on desktop, a button on touch ----
   const hint = document.createElement('div');

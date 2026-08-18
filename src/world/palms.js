@@ -71,7 +71,7 @@ export function windify(mat, key) {
 }
 
 // ------------------------------------------------------------------ frond
-function buildFrond(leaf, opts) {
+export function buildFrond(leaf, opts) {
   const {
     origin, crownUp, azimuth, pitch, length, rand, tint,
     droopRate = 1.0, flexBase = 0.35, phase = 0, dead = false,
@@ -169,10 +169,13 @@ function buildFrond(leaf, opts) {
 }
 
 // ------------------------------------------------------------------ tree
-function buildPalm(bark, leaf, husk, opts) {
-  const { x, z, height, leanDir, leanAmount, seed } = opts;
+// Writes one palm into the three shared mesh buffers. The grove passes
+// island coordinates and lets the height field find the ground; the
+// /components viewer passes baseY directly to stand a tree on flat floor.
+export function buildPalm(bark, leaf, husk, opts) {
+  const { x, z, height, leanDir, leanAmount, seed, baseY: baseYOpt } = opts;
   const rand = mulberry32(seed);
-  const baseY = islandHeight(x, z) - 0.22;
+  const baseY = baseYOpt ?? islandHeight(x, z) - 0.22;
   const base = new THREE.Vector3(x, baseY, z);
   const treePhase = rand() * Math.PI * 2;
 
@@ -286,6 +289,22 @@ function addCoconut(husk, center, radius, tint, flex, phase, rand) {
   sph.dispose();
 }
 
+// The grove's three materials: bark, leaflets, husks. One set dresses every
+// palm on the island; the viewer builds its own set per specimen.
+export function palmMaterials() {
+  return {
+    barkMat: windify(new THREE.MeshStandardMaterial({
+      map: barkTexture(), roughness: 0.92, bumpMap: barkTexture(), bumpScale: 0.35,
+    }), 'bark'),
+    leafMat: windify(new THREE.MeshStandardMaterial({
+      map: leafletTexture(), roughness: 0.55, side: THREE.DoubleSide, vertexColors: true,
+    }), 'leaf'),
+    huskMat: windify(new THREE.MeshStandardMaterial({
+      map: huskTexture(), roughness: 0.85, vertexColors: true,
+    }), 'husk'),
+  };
+}
+
 // ------------------------------------------------------------------ grove
 export function buildPalms() {
   const bark = new MeshData(), leaf = new MeshData(), husk = new MeshData();
@@ -382,15 +401,7 @@ export function buildPalms() {
   // physics nut from coconuts.js, so they're all kickable. Only the
   // clusters up in the crowns stay merged into the static husk mesh.)
 
-  const barkMat = windify(new THREE.MeshStandardMaterial({
-    map: barkTexture(), roughness: 0.92, bumpMap: barkTexture(), bumpScale: 0.35,
-  }), 'bark');
-  const leafMat = windify(new THREE.MeshStandardMaterial({
-    map: leafletTexture(), roughness: 0.55, side: THREE.DoubleSide, vertexColors: true,
-  }), 'leaf');
-  const huskMat = windify(new THREE.MeshStandardMaterial({
-    map: huskTexture(), roughness: 0.85, vertexColors: true,
-  }), 'husk');
+  const { barkMat, leafMat, huskMat } = palmMaterials();
 
   const group = new THREE.Group();
   group.name = 'palms';

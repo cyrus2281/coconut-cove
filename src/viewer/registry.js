@@ -1,7 +1,10 @@
-// The creature registry for the /components viewer. Each entry builds one
-// animal in isolation and exposes named poses; the tick drivers mirror the
-// motion math the world's brains use (birds.js, crabs.js, turtle.js,
+// The registry for the /components viewer. Each entry builds one piece of
+// the island in isolation and exposes named poses; the tick drivers mirror
+// the motion math the world's brains use (birds.js, crabs.js, turtle.js,
 // sealife.js), so what you evaluate here is what plays on the island.
+//
+// The animals live here; everything they live among (palms, corals, the
+// pond, the volcano) lives in props.js. The rail shows the animals first.
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
@@ -16,6 +19,7 @@ import { buildEel } from '../creatures/eel.js';
 import { buildShark } from '../creatures/shark.js';
 import { buildButterflyWings, BUTTERFLY_TINTS } from '../creatures/butterfly.js';
 import { silversideAsset } from '../creatures/shorefish.js';
+import { PROPS } from './props.js';
 
 // the species library is session-shared in the viewer (its geometries and
 // materials are never disposed on switch); everything else rebuilds per view
@@ -73,7 +77,7 @@ function fishEntry(id, label, section, opts = {}) {
   };
 }
 
-export const REGISTRY = [
+export const CREATURES = [
   // ------------------------------------------------------------- shore
   {
     id: 'gull', label: 'gull', section: 'shore', env: 'beach',
@@ -409,3 +413,5 @@ export const REGISTRY = [
     },
   },
 ];
+
+export const REGISTRY = [...CREATURES, ...PROPS];

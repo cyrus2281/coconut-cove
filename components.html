@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Coconut Cove · creature viewer</title>
+  <title>Coconut Cove · component viewer</title>
   <meta name="robots" content="noindex" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -15,7 +15,7 @@
     }
     #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
-    /* ---- left rail: the creature list ---- */
+    /* ---- left rail: the component list ---- */
     #rail {
       position: fixed; left: 0; top: 0; bottom: 0; z-index: 10;
       width: 208px; overflow-y: auto;
@@ -117,8 +117,8 @@
   <canvas id="stage"></canvas>
 
   <nav id="rail">
-    <h1>creature viewer</h1>
-    <span class="sub">every animal, one at a time</span>
+    <h1>component viewer</h1>
+    <span class="sub">every piece of the island, one at a time</span>
     <div id="list"></div>
     <a class="back" href="/">&larr; back to the island</a>
   </nav>
@@ -139,7 +139,7 @@
       <button class="chip" id="turnBtn">turntable</button>
       <button class="chip" id="wireBtn">wireframe</button>
       <button class="chip" id="gridBtn">grid</button>
-      <button class="chip" id="rerollBtn" title="rebuild this creature with a fresh seed">reroll</button>
+      <button class="chip" id="rerollBtn" title="rebuild this component with a fresh seed">reroll</button>
     </div>
     <div class="row" id="speedWrap">
       <span>speed</span>

@@ -131,16 +131,37 @@ Everything is generated at startup from seeded noise — geometry, textures
   homes. Same seed, same island, every time — and the ⟳ / `R` button pins
   each new island's seed in the URL so you can share it.
 
-## Creature viewer
+## Component viewer
 
-Open <http://localhost:5173/components> for a debug gallery of every animal
-in isolation — gull, ghost crab, turtles, butterflies, all the reef fish,
-the shark, the ray, the moon jelly and the moray — each on a lit stage with
-its poses on buttons (fly / fold / crawl / dig / burst…), beach and
-underwater lighting, night mode, turntable, wireframe, a reroll for seeded
-variation, and live triangle/fps stats. Handy for judging looks without
-walking the island. (`window.__viewer` offers `load(id)`, `pose(id)` and
-`orbit(azimuth, polar, dist)` for scripted screenshots.)
+Open <http://localhost:5173/components> for a debug gallery of every piece of
+the island in isolation, each on a lit stage:
+
+- **Animals** — gull, ghost crab, turtles, butterflies, all the reef fish,
+  the shark, the ray, the moon jelly and the moray, with their poses on
+  buttons (fly / fold / crawl / dig / burst…).
+- **Palms & trees** — a coconut palm, a single frond green or dead, and the
+  grandmother fig with her rope swing. Wind is the pose: still air, breeze,
+  gale, driven through the same `uWindAmp` the grove sways on.
+- **Undergrowth** — dune grass, pond reeds, seaweed wrack.
+- **Beach** — a kickable coconut (at rest, rolling, afloat), the four shell
+  species, a starfish, a drift of pebbles, driftwood, a shore boulder.
+- **Camp** — the walker's cairn, the wrecked hull dug out of its dune, the
+  campfire (blazing / squall / after the rain), the hammock slung between
+  two palms, and footprint decals for a walker, a crab and a turtle.
+- **Coral garden** — brain, staghorn in both morphs, table coral, sea fan,
+  barrel sponge, anemone, urchin, sea star, seagrass, reef boulder, and a
+  giant clam that slams shut on cue.
+- **Water & horizon** — the freshwater pond in its own basin (calm or in the
+  rain), the volcano with its smoke column and night-lit crater, a sister
+  island, and the sloop.
+
+Every entry is built by the island's own code, so what you judge here is
+what grows out there; the props that hunt for a site (fig, campfire, pond)
+bring a patch of real terrain with them, and **reroll** regrows the island
+under them. Plus beach and underwater lighting, night mode, turntable,
+wireframe, and live triangle/fps stats. (`window.__viewer` offers
+`load(id)`, `pose(id)` and `orbit(azimuth, polar, dist)` for scripted
+screenshots.)
 
 ## Debug console
 

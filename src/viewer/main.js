@@ -1,6 +1,8 @@
-// The /components creature viewer: every animal from the island, one at a
-// time, on a lit turntable with its poses on buttons. No island here, no
-// player, no weather; just the assets, so their looks can be judged fast.
+// The /components viewer: every piece of the island, one at a time, on a
+// lit turntable with its poses on buttons. No island here, no player, no
+// weather; just the assets, so their looks can be judged fast. Animals come
+// from registry.js, everything else from props.js — a few props (the fig,
+// the campfire, the pond) bring a patch of their own ground with them.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -50,6 +52,7 @@ scene.add(hemi);
 const stage = new THREE.Group(); // spins when the turntable is on
 scene.add(stage);
 
+// both floors are built at 10m and scaled to fit the specimen
 const beachFloor = new THREE.Mesh(
   new THREE.CircleGeometry(10, 56).rotateX(-Math.PI / 2),
   new THREE.MeshStandardMaterial({ color: 0xd8c9a3, roughness: 1 })
@@ -89,8 +92,14 @@ const ENVS = {
   },
 };
 
+function updateFloors() {
+  beachFloor.visible = !state.ownGround && state.env === 'beach';
+  seaFloor.visible = !state.ownGround && state.env === 'water';
+}
+
 const state = {
   env: 'beach',
+  ownGround: false,
   night: false,
   entry: null,
   view: null,     // { object, anims, state, tick, dispose? }
@@ -114,8 +123,7 @@ function applyEnv() {
   key.intensity = e.key * (state.night ? 0.12 : 1);
   key.color.set(state.night ? 0xa8c4e0 : 0xfff1da);
   rim.intensity = e.rim * (state.night ? 0.4 : 1);
-  beachFloor.visible = state.env === 'beach';
-  seaFloor.visible = state.env === 'water';
+  updateFloors();
   uniforms.uTide.value = e.tide;
   uniforms.uSunI.value = state.night ? 0.1 : 1;
   uniforms.uNightF.value = nightK;
@@ -146,7 +154,7 @@ function disposeView() {
 
 function frameObject(object) {
   const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) return;
+  if (box.isEmpty()) return 1;
   const center = box.getCenter(new THREE.Vector3());
   const sphere = box.getBoundingSphere(new THREE.Sphere());
   const r = Math.max(sphere.radius, 0.08);
@@ -156,7 +164,30 @@ function frameObject(object) {
   camera.near = Math.max(r / 50, 0.005);
   camera.far = Math.max(200, r * 60);
   camera.updateProjectionMatrix();
+  controls.maxDistance = Math.max(40, r * 14);
   controls.update();
+  return r;
+}
+
+// A shell sits on a couple of metres of sand, a palm on ten, a volcano on
+// nothing at all: floor, grid and shadow frustum all follow the specimen.
+function fitStudio(r) {
+  const floorK = THREE.MathUtils.clamp(r / 4, 0.22, 30);
+  beachFloor.scale.setScalar(floorK);
+  seaFloor.scale.setScalar(floorK);
+  grid.scale.setScalar(THREE.MathUtils.clamp(r / 1.6, 0.15, 12));
+
+  // past a certain size a 2048 map over the whole subject is mush, and the
+  // props that big (the volcano, the far islands) cast nothing worth seeing
+  key.castShadow = r <= 40;
+  const s = Math.max(r * 1.6, 1);
+  key.position.set(4, 6, 3).normalize().multiplyScalar(Math.max(r * 3, 8));
+  key.shadow.camera.left = -s; key.shadow.camera.right = s;
+  key.shadow.camera.top = s; key.shadow.camera.bottom = -s;
+  key.shadow.camera.far = Math.max(r * 9, 30);
+  key.shadow.camera.updateProjectionMatrix();
+  key.shadow.bias = -0.0004 * Math.max(1, r / 2);
+  rim.position.set(-4, 3, -4).normalize().multiplyScalar(Math.max(r * 3, 8));
 }
 
 function setWireframe(on) {
@@ -175,6 +206,12 @@ function loadCreature(entry, { reseed = false } = {}) {
   for (const m of state.touchedMats) m.wireframe = false;
   state.touchedMats.clear();
   disposeView();
+
+  // poses drive the shared weather uniforms (wind bends the palms, a squall
+  // beats the campfire down), so hand the next specimen a calm day
+  uniforms.uWindAmp.value = 1;
+  uniforms.uStorm.value = 0;
+  uniforms.uRainWet.value = 0;
 
   state.entry = entry;
   if (reseed) state.seed = (Math.random() * 0xffffffff) >>> 0;
@@ -198,11 +235,17 @@ function loadCreature(entry, { reseed = false } = {}) {
     state.env = entry.env;
   }
   applyEnv();
+  // a prop that carries its own ground (a dune, a pond basin, open sea)
+  // stands on that instead of the studio's flat disc
+  state.ownGround = view.floor === false;
+  updateFloors();
   if (state.wireframe) setWireframe(true);
 
   // settle one tick so the pose is right before framing the camera
   view.tick(uniforms.uTime.value, 1 / 60);
-  frameObject(view.object);
+  stage.updateMatrixWorld(true);
+  // props framed on the prop itself, not on the patch of island under it
+  fitStudio(frameObject(view.focus ?? view.object));
 
   renderAnimButtons();
   renderList();
@@ -231,8 +274,11 @@ function renderList() {
 }
 
 const animRow = document.getElementById('animRow');
+const animLabel = animRow.querySelector('.chipLabel');
 function renderAnimButtons() {
   animRow.querySelectorAll('button').forEach((b) => b.remove());
+  const poses = state.view ? state.view.anims.length : 0;
+  animLabel.style.display = poses ? '' : 'none';
   if (!state.view) return;
   for (const a of state.view.anims) {
     const b = document.createElement('button');

@@ -42,7 +42,7 @@ function shorePoint(rand, hMin, hMax, rMin = -12, rMax = 8) {
 }
 
 // ------------------------------------------------------------- shell shapes
-function spiralShellGeometry(whorls = 2.6, elongation = 1.35) {
+export function spiralShellGeometry(whorls = 2.6, elongation = 1.35) {
   const ALONG = 42, AROUND = 10;
   const g = new MeshData();
   const rows = [];
@@ -78,7 +78,7 @@ function spiralShellGeometry(whorls = 2.6, elongation = 1.35) {
   return geo;
 }
 
-function scallopGeometry() {
+export function scallopGeometry() {
   const RAD = 8, ANG = 26;
   const g = new MeshData();
   const rows = [];
@@ -95,15 +95,17 @@ function scallopGeometry() {
     }
     rows.push(row);
   }
+  // wind the quads so the dome's faces point up: the other way round the
+  // shell renders as its own backface and the beach shows only its shadow
   for (let i = 0; i < RAD; i++) {
     for (let k = 0; k < ANG; k++) {
-      g.quad(rows[i][k], rows[i][k + 1], rows[i + 1][k], rows[i + 1][k + 1]);
+      g.quad(rows[i][k + 1], rows[i][k], rows[i + 1][k + 1], rows[i + 1][k]);
     }
   }
   return g.build();
 }
 
-function clamGeometry() {
+export function clamGeometry() {
   const geo = new THREE.SphereGeometry(0.5, 14, 10);
   geo.scale(1, 0.42, 0.82);
   const pos = geo.attributes.position;
@@ -117,7 +119,7 @@ function clamGeometry() {
   return geo;
 }
 
-function starfishGeometry() {
+export function starfishGeometry() {
   const RAD = 9, ANG = 60;
   const g = new MeshData();
   const rows = [];
@@ -145,16 +147,27 @@ function starfishGeometry() {
 }
 
 // ------------------------------------------------------------- scatter passes
-function placeShells(group) {
-  const rand = mulberry32(subSeed('shells'));
-  const shellMat = new THREE.MeshStandardMaterial({
+export function shellMaterial() {
+  return new THREE.MeshStandardMaterial({
     map: shellTexture(), roughness: 0.42, metalness: 0.0,
   });
-  const tints = [
-    new THREE.Color(1.0, 0.98, 0.94), new THREE.Color(1.0, 0.9, 0.82),
-    new THREE.Color(0.98, 0.8, 0.72), new THREE.Color(0.92, 0.88, 0.8),
-    new THREE.Color(1.0, 0.82, 0.6), new THREE.Color(0.85, 0.82, 0.78),
-  ];
+}
+
+export const SHELL_TINTS = [
+  [1.0, 0.98, 0.94], [1.0, 0.9, 0.82], [0.98, 0.8, 0.72],
+  [0.92, 0.88, 0.8], [1.0, 0.82, 0.6], [0.85, 0.82, 0.78],
+];
+
+// The starfish wears its stripes in its vertex colors, so one plain
+// vertex-color material dresses it wherever it turns up.
+export function starfishMaterial() {
+  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+}
+
+function placeShells(group) {
+  const rand = mulberry32(subSeed('shells'));
+  const shellMat = shellMaterial();
+  const tints = SHELL_TINTS.map((t) => new THREE.Color(t[0], t[1], t[2]));
 
   const kinds = [
     { geo: spiralShellGeometry(2.6, 1.35), count: 70, s: [0.045, 0.11], lay: true },
@@ -196,7 +209,7 @@ function placeShells(group) {
   }
 
   // starfish
-  const starMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
+  const starMat = starfishMaterial();
   const starGeo = starfishGeometry();
   for (let i = 0; i < 3; i++) {
     const p = shorePoint(rand, -0.6, 0.25);
@@ -212,17 +225,25 @@ function placeShells(group) {
   }
 }
 
+// A pebble is one faceted little lump, scaled down hard and tinted from the
+// drift-line palette. Shared by the beach drift and the cairn's pebble ring.
+export function pebbleAssets() {
+  return {
+    geo: new THREE.IcosahedronGeometry(0.5, 0),
+    mat: new THREE.MeshStandardMaterial({ roughness: 0.8 }),
+    shades: [
+      new THREE.Color(0.95, 0.92, 0.85), new THREE.Color(0.82, 0.72, 0.58),
+      new THREE.Color(0.66, 0.6, 0.52), new THREE.Color(0.35, 0.3, 0.26),
+      new THREE.Color(0.98, 0.85, 0.78), new THREE.Color(0.9, 0.88, 0.86),
+    ],
+  };
+}
+
 function placePebbles(group) {
   const rand = mulberry32(subSeed('pebbles'));
   const COUNT = 1700;
-  const geo = new THREE.IcosahedronGeometry(0.5, 0);
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.8 });
+  const { geo, mat, shades } = pebbleAssets();
   const inst = new THREE.InstancedMesh(geo, mat, COUNT);
-  const shades = [
-    new THREE.Color(0.95, 0.92, 0.85), new THREE.Color(0.82, 0.72, 0.58),
-    new THREE.Color(0.66, 0.6, 0.52), new THREE.Color(0.35, 0.3, 0.26),
-    new THREE.Color(0.98, 0.85, 0.78), new THREE.Color(0.9, 0.88, 0.86),
-  ];
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
     e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
   let placed = 0;
@@ -246,12 +267,44 @@ function placePebbles(group) {
   group.add(inst);
 }
 
+// One weathered basalt boulder: an indexed sphere pushed around by two
+// octaves of noise, squashed, and painted gray-to-wet-dark up its flanks.
+// (cx, cz) only shifts the noise so neighbours in a cluster differ.
+export function boulderGeo(size, noise, cx = 0, cz = 0) {
+  // indexed sphere -> shared vertices -> smooth weathered normals
+  const geo = new THREE.SphereGeometry(size, 26, 18);
+  const pos = geo.attributes.position;
+  const p = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    p.fromBufferAttribute(pos, i);
+    const n = p.clone().normalize();
+    const disp = 1
+      + 0.30 * noise.fbm(n.x * 1.6 + cx, (n.y + n.z) * 1.6 + cz, 3)
+      + 0.17 * noise.fbm(n.x * 5.5 + cz, (n.z - n.y) * 5.5 + cx, 3);
+    pos.setXYZ(i, p.x * disp, p.y * disp * 0.70, p.z * disp);
+  }
+  geo.computeVertexNormals();
+  // weathered gray basalt, wet-dark toward the base
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    const wet = 1 - THREE.MathUtils.smoothstep(y, -size * 0.1, size * 0.4);
+    const strata = 0.78 + 0.42 * noise.fbm(pos.getX(i) * 7.5 / size, (pos.getY(i) + pos.getZ(i)) * 7.5 / size, 3);
+    const g = (0.30 - wet * 0.15) * strata;
+    colors[i * 3] = g * 1.05; colors[i * 3 + 1] = g * 0.98; colors[i * 3 + 2] = g * 0.9;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  return geo;
+}
+
+export function boulderMaterial() {
+  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+}
+
 function placeRocks(group) {
   const rand = mulberry32(subSeed('rocks'));
   const noise = new Simplex2(subSeed('rockShape'));
-  const rockMat = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.95,
-  });
+  const rockMat = boulderMaterial();
 
   const clusters = [
     { az: 3.55, d: 0.5, sizes: [2.0, 1.3, 0.85, 0.5] },  // outcrop wading into the sea
@@ -268,31 +321,7 @@ function placeRocks(group) {
     }
     let cx = Math.cos(cl.az) * r0, cz = Math.sin(cl.az) * r0;
     for (const size of cl.sizes) {
-      // indexed sphere → shared vertices → smooth weathered normals
-      const geo = new THREE.SphereGeometry(size, 26, 18);
-      const pos = geo.attributes.position;
-      const p = new THREE.Vector3();
-      for (let i = 0; i < pos.count; i++) {
-        p.fromBufferAttribute(pos, i);
-        const n = p.clone().normalize();
-        const disp = 1
-          + 0.30 * noise.fbm(n.x * 1.6 + cx, (n.y + n.z) * 1.6 + cz, 3)
-          + 0.17 * noise.fbm(n.x * 5.5 + cz, (n.z - n.y) * 5.5 + cx, 3);
-        pos.setXYZ(i, p.x * disp, p.y * disp * 0.70, p.z * disp);
-      }
-      geo.computeVertexNormals();
-      // weathered gray basalt, wet-dark toward the base
-      const colors = new Float32Array(pos.count * 3);
-      for (let i = 0; i < pos.count; i++) {
-        const y = pos.getY(i);
-        const wet = 1 - THREE.MathUtils.smoothstep(y, -size * 0.1, size * 0.4);
-        const strata = 0.78 + 0.42 * noise.fbm(pos.getX(i) * 7.5 / size, (pos.getY(i) + pos.getZ(i)) * 7.5 / size, 3);
-        const g = (0.30 - wet * 0.15) * strata;
-        colors[i * 3] = g * 1.05; colors[i * 3 + 1] = g * 0.98; colors[i * 3 + 2] = g * 0.9;
-      }
-      geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-      const mesh = new THREE.Mesh(geo, rockMat);
+      const mesh = new THREE.Mesh(boulderGeo(size, noise, cx, cz), rockMat);
       const h = islandHeight(cx, cz);
       mesh.position.set(cx, h + size * 0.10, cz);
       mesh.rotation.y = rand() * Math.PI * 2;
@@ -305,11 +334,30 @@ function placeRocks(group) {
   }
 }
 
-function placeDriftwood(group) {
-  const rand = mulberry32(subSeed('driftwood'));
-  const mat = new THREE.MeshStandardMaterial({
+// A driftwood log: a tapered cylinder laid along X with a slight bow, the
+// way a spar settles once the sea is done with it.
+export function driftwoodGeo(len, r) {
+  const geo = new THREE.CylinderGeometry(r * 0.55, r, len, 9, 8);
+  geo.rotateZ(Math.PI / 2); // lay along X
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const lx = pos.getX(i);
+    const bend = Math.sin((lx / len + 0.5) * Math.PI) * 0.08;
+    pos.setY(i, pos.getY(i) + bend);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+export function driftwoodMaterial() {
+  return new THREE.MeshStandardMaterial({
     map: barkTexture(true), roughness: 0.9, bumpMap: barkTexture(true), bumpScale: 0.3,
   });
+}
+
+function placeDriftwood(group) {
+  const rand = mulberry32(subSeed('driftwood'));
+  const mat = driftwoodMaterial();
   const logs = [
     { az: 2.2, d: -4.5, len: 3.4, r: 0.16 },
     { az: 0.55, d: -3.8, len: 2.3, r: 0.12 },
@@ -317,16 +365,7 @@ function placeDriftwood(group) {
   for (const l of logs) {
     const shore = shoreRadius(l.az) + l.d;
     const x = Math.cos(l.az) * shore, z = Math.sin(l.az) * shore;
-    const geo = new THREE.CylinderGeometry(l.r * 0.55, l.r, l.len, 9, 8);
-    geo.rotateZ(Math.PI / 2); // lay along X
-    const pos = geo.attributes.position;
-    for (let i = 0; i < pos.count; i++) {
-      const lx = pos.getX(i);
-      const bend = Math.sin((lx / l.len + 0.5) * Math.PI) * 0.08;
-      pos.setY(i, pos.getY(i) + bend);
-    }
-    geo.computeVertexNormals();
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(driftwoodGeo(l.len, l.r), mat);
     // settle the log into the sand at both ends
     const yaw = rand() * Math.PI * 2;
     const ex = Math.cos(yaw) * l.len * 0.42, ez = -Math.sin(yaw) * l.len * 0.42;
@@ -354,44 +393,54 @@ function placeGrass(group) {
     if (lagoonFreeboard(x, z) < 0.1) continue; // not in the pond — reeds go there
     if (scatterNoise.noise(x * 0.055, z * 0.055) < 0.02) continue;
     tufts++;
-    const blades = 14 + Math.floor(rand() * 9);
-    const phase = rand() * Math.PI * 2;
-    for (let b = 0; b < blades; b++) {
-      const a = rand() * Math.PI * 2;
-      const off = rand() * 0.16;
-      const bx = x + Math.cos(a) * off, bz = z + Math.sin(a) * off;
-      const by = islandHeight(bx, bz) - 0.02;
-      const hgt = 0.22 + rand() * 0.45;
-      const lean = 0.15 + rand() * 0.35;
-      const la = rand() * Math.PI * 2;
-      const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
-      const w0 = 0.006 + rand() * 0.004;
-      const g0 = 0.75 + rand() * 0.4;
-      const rows = [];
-      for (let s = 0; s <= 2; s++) {
-        const t = s / 2;
-        const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
-        const py = by + hgt * t * (1 - lean * 0.35 * t);
-        const w = w0 * (1 - t * 0.95);
-        const col = [0.34 * g0 + t * 0.2, 0.36 * g0 + t * 0.16, 0.14 * g0 + t * 0.08];
-        const fl = t * t * 0.55;
-        const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
-        rows.push([
-          data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
-          data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
-        ]);
-      }
-      data.quad(rows[0][0], rows[0][1], rows[1][0], rows[1][1]);
-      data.quad(rows[1][0], rows[1][1], rows[2][0], rows[2][1]);
-    }
+    grassTuft(data, x, z, rand);
   }
-  const mat = windify(new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.7, side: THREE.DoubleSide,
-  }), 'grass');
-  const mesh = new THREE.Mesh(data.build(), mat);
+  const mesh = new THREE.Mesh(data.build(), grassMaterial());
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
+}
+
+// One tuft of dune grass: a couple of dozen creased blades leaning off a
+// common root, written into a shared wind-flexed mesh. `ground` says where
+// the sand is under each blade.
+export function grassTuft(data, x, z, rand, ground = islandHeight) {
+  const blades = 14 + Math.floor(rand() * 9);
+  const phase = rand() * Math.PI * 2;
+  for (let b = 0; b < blades; b++) {
+    const a = rand() * Math.PI * 2;
+    const off = rand() * 0.16;
+    const bx = x + Math.cos(a) * off, bz = z + Math.sin(a) * off;
+    const by = ground(bx, bz) - 0.02;
+    const hgt = 0.22 + rand() * 0.45;
+    const lean = 0.15 + rand() * 0.35;
+    const la = rand() * Math.PI * 2;
+    const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
+    const w0 = 0.006 + rand() * 0.004;
+    const g0 = 0.75 + rand() * 0.4;
+    const rows = [];
+    for (let s = 0; s <= 2; s++) {
+      const t = s / 2;
+      const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
+      const py = by + hgt * t * (1 - lean * 0.35 * t);
+      const w = w0 * (1 - t * 0.95);
+      const col = [0.34 * g0 + t * 0.2, 0.36 * g0 + t * 0.16, 0.14 * g0 + t * 0.08];
+      const fl = t * t * 0.55;
+      const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
+      rows.push([
+        data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
+        data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
+      ]);
+    }
+    data.quad(rows[0][0], rows[0][1], rows[1][0], rows[1][1]);
+    data.quad(rows[1][0], rows[1][1], rows[2][0], rows[2][1]);
+  }
+}
+
+export function grassMaterial() {
+  return windify(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.7, side: THREE.DoubleSide,
+  }), 'grass');
 }
 
 // An old hull swallowed by the dunes: a curved keel line with pairs of
@@ -419,6 +468,21 @@ function placeWreck(group) {
   if (!site) return;
 
   const keelYaw = rand() * Math.PI * 2;
+  const geo = wreckGeo(rand);
+  geo.rotateY(-keelYaw);
+  geo.translate(site.x, site.h + 0.1, site.z);
+
+  const mesh = new THREE.Mesh(geo, wreckMaterial());
+  mesh.name = 'wreck';
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+// The hull itself, built around its own origin with the keel along X: a
+// bowed keel beam, pairs of broken ribs arcing off it, and the stem post
+// leaning at the bow.
+export function wreckGeo(rand) {
   const LEN = 10 + rand() * 2.5;
   const parts = [];
 
@@ -463,22 +527,17 @@ function placeWreck(group) {
   stem.translate(LEN * 0.52, 0.15, 0);
   parts.push(stem);
 
-  const geo = mergeGeometries(parts);
-  geo.rotateY(-keelYaw);
-  geo.translate(site.x, site.h + 0.1, site.z);
+  return mergeGeometries(parts);
+}
 
-  const mat = new THREE.MeshStandardMaterial({
+export function wreckMaterial() {
+  return new THREE.MeshStandardMaterial({
     map: barkTexture(true),
     bumpMap: barkTexture(true),
     bumpScale: 0.4,
     roughness: 0.95,
     color: 0xcfc6b6, // bleached silver-gray over the driftwood grain
   });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.name = 'wreck';
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  group.add(mesh);
 }
 
 // A walker's cairn on the summit, ringed by a little circle of pale pebbles.
@@ -500,10 +559,17 @@ function placeCairn(group) {
   CAIRN_POS = best ? { x: best.x, z: best.z, h: best.h } : null;
   if (!best) return;
 
+  group.add(cairnStack(rand, noise, best.x, best.h, best.z));
+  group.add(cairnRing(rand, best.x, best.z));
+}
+
+// The stack: five or six flattened stones nesting into each other, knee-high
+// in all, rising from (x, h, z).
+export function cairnStack(rand, noise, x, h, z) {
   const stones = [];
   const N = 5 + Math.floor(rand() * 2);
-  let y = best.h - 0.1;
-  let px = best.x, pz = best.z;
+  let y = h - 0.1;
+  let px = x, pz = z;
   for (let i = 0; i < N; i++) {
     const t = i / (N - 1);
     const r0 = 0.34 * (1 - t * 0.66) + 0.04;
@@ -526,16 +592,20 @@ function placeCairn(group) {
     y += r0 * 0.34;
     stones.push(g);
   }
-  const geo = mergeGeometries(stones);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.96 });
-  const cairn = new THREE.Mesh(geo, mat);
+  const cairn = new THREE.Mesh(
+    mergeGeometries(stones),
+    new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.96 })
+  );
   cairn.name = 'cairn';
   cairn.castShadow = true;
   cairn.receiveShadow = true;
-  group.add(cairn);
+  return cairn;
+}
 
-  // pebble ring with four compass spokes
-  const ringGeo = new THREE.IcosahedronGeometry(0.5, 0);
+// The pebble ring around the stack, with four compass spokes. `ground` says
+// where the sand is; the island passes its height field.
+export function cairnRing(rand, cx, cz, ground = islandHeight) {
+  const { geo: ringGeo } = pebbleAssets(); // the ring is drift-line pebbles
   const ringMat = new THREE.MeshStandardMaterial({ roughness: 0.85 });
   const RING_N = 20, SPOKE_N = 3 * 4;
   const inst = new THREE.InstancedMesh(ringGeo, ringMat, RING_N + SPOKE_N);
@@ -547,7 +617,7 @@ function placeCairn(group) {
   const put = (x, z, s, col) => {
     e.set(rand() * 6.28, rand() * 6.28, rand() * 6.28);
     q.setFromEuler(e);
-    v.set(x, islandHeight(x, z) + 0.01, z);
+    v.set(x, ground(x, z) + 0.01, z);
     sc.setScalar(s / 0.5);
     m.compose(v, q, sc);
     inst.setMatrixAt(placed, m);
@@ -556,18 +626,18 @@ function placeCairn(group) {
   };
   for (let i = 0; i < RING_N; i++) {
     const a = (i / RING_N) * Math.PI * 2;
-    put(best.x + Math.cos(a) * 1.15, best.z + Math.sin(a) * 1.15, 0.028 + rand() * 0.014, pale);
+    put(cx + Math.cos(a) * 1.15, cz + Math.sin(a) * 1.15, 0.028 + rand() * 0.014, pale);
   }
   for (let s = 0; s < 4; s++) {
     const a = (s / 4) * Math.PI * 2; // world-axis spokes: a compass rose
     for (let i = 0; i < 3; i++) {
       const rr = 1.35 + i * 0.22;
-      put(best.x + Math.cos(a) * rr, best.z + Math.sin(a) * rr, 0.05 - i * 0.008, s === 0 ? dark : pale);
+      put(cx + Math.cos(a) * rr, cz + Math.sin(a) * rr, 0.05 - i * 0.008, s === 0 ? dark : pale);
     }
   }
   inst.count = placed;
   inst.receiveShadow = true;
-  group.add(inst);
+  return inst;
 }
 
 // Reeds crowding the lagoon's wet margin: taller, stiffer and greener than
@@ -588,49 +658,58 @@ function placeReeds(group) {
       const fb = lagoonFreeboard(x, z);
       if (fb > 0.14 || fb < -0.45) continue;   // the wet margin only
       clumps++;
-      const blades = 6 + Math.floor(rand() * 7);
-      const phase = rand() * Math.PI * 2;
-      for (let b = 0; b < blades; b++) {
-        const ba = rand() * Math.PI * 2;
-        const off = rand() * 0.22;
-        const bx = x + Math.cos(ba) * off, bz = z + Math.sin(ba) * off;
-        const by = islandHeight(bx, bz) - 0.02;
-        const hgt = 0.55 + rand() * 0.75;
-        const lean = 0.1 + rand() * 0.28;
-        const la = rand() * Math.PI * 2;
-        const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
-        const w0 = 0.009 + rand() * 0.006;
-        const g0 = 0.7 + rand() * 0.45;
-        const rows = [];
-        const SEGS = 3;
-        for (let s = 0; s <= SEGS; s++) {
-          const t = s / SEGS;
-          const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
-          const py = by + hgt * t * (1 - lean * 0.3 * t);
-          const w = w0 * (1 - t * 0.9);
-          // green at the base, sun-bleached toward the tip
-          const col = [0.16 * g0 + t * 0.26, 0.30 * g0 + t * 0.22, 0.11 * g0 + t * 0.07];
-          const fl = t * t * 0.5;
-          const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
-          rows.push([
-            data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
-            data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
-          ]);
-        }
-        for (let s = 0; s < SEGS; s++) {
-          data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
-        }
-      }
+      reedClump(data, x, z, rand);
     }
   }
   if (!data.pos.length) return;
-  const mat = windify(new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.62, side: THREE.DoubleSide,
-  }), 'reed');
-  const mesh = new THREE.Mesh(data.build(), mat);
+  const mesh = new THREE.Mesh(data.build(), reedMaterial());
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   group.add(mesh);
+}
+
+// One clump of pond reeds: taller, stiffer and greener than dune grass,
+// green at the foot and sun-bleached at the tip.
+export function reedClump(data, x, z, rand, ground = islandHeight) {
+  const blades = 6 + Math.floor(rand() * 7);
+  const phase = rand() * Math.PI * 2;
+  for (let b = 0; b < blades; b++) {
+    const ba = rand() * Math.PI * 2;
+    const off = rand() * 0.22;
+    const bx = x + Math.cos(ba) * off, bz = z + Math.sin(ba) * off;
+    const by = ground(bx, bz) - 0.02;
+    const hgt = 0.55 + rand() * 0.75;
+    const lean = 0.1 + rand() * 0.28;
+    const la = rand() * Math.PI * 2;
+    const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
+    const w0 = 0.009 + rand() * 0.006;
+    const g0 = 0.7 + rand() * 0.45;
+    const rows = [];
+    const SEGS = 3;
+    for (let s = 0; s <= SEGS; s++) {
+      const t = s / SEGS;
+      const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
+      const py = by + hgt * t * (1 - lean * 0.3 * t);
+      const w = w0 * (1 - t * 0.9);
+      // green at the base, sun-bleached toward the tip
+      const col = [0.16 * g0 + t * 0.26, 0.30 * g0 + t * 0.22, 0.11 * g0 + t * 0.07];
+      const fl = t * t * 0.5;
+      const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
+      rows.push([
+        data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, fl, phase),
+        data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, fl, phase),
+      ]);
+    }
+    for (let s = 0; s < SEGS; s++) {
+      data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
+    }
+  }
+}
+
+export function reedMaterial() {
+  return windify(new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.62, side: THREE.DoubleSide,
+  }), 'reed');
 }
 
 function placeSeaweed(group) {
@@ -639,40 +718,49 @@ function placeSeaweed(group) {
   for (let c = 0; c < 14; c++) {
     const p = shorePoint(rand, -0.15, 0.5);
     if (!p) continue;
-    const ribbons = 2 + Math.floor(rand() * 4);
-    for (let rb = 0; rb < ribbons; rb++) {
-      const a = rand() * Math.PI * 2;
-      const len = 0.35 + rand() * 0.6;
-      const w = 0.02 + rand() * 0.02;
-      const g0 = 0.7 + rand() * 0.5;
-      const col = [0.13 * g0, 0.17 * g0, 0.08 * g0];
-      const sx = p.x + (rand() - 0.5) * 0.5, sz = p.z + (rand() - 0.5) * 0.5;
-      const rows = [];
-      const SEGS = 4;
-      for (let s = 0; s <= SEGS; s++) {
-        const t = s / SEGS;
-        const wob = Math.sin(t * 9 + rb * 3) * 0.06;
-        const px = sx + Math.cos(a) * len * t + Math.cos(a + Math.PI / 2) * wob;
-        const pz = sz + Math.sin(a) * len * t + Math.sin(a + Math.PI / 2) * wob;
-        const py = islandHeight(px, pz) + 0.012 + Math.sin(t * Math.PI) * 0.015;
-        const sideA = Math.cos(a + Math.PI / 2) * w * (1 - t * 0.5);
-        const sideB = Math.sin(a + Math.PI / 2) * w * (1 - t * 0.5);
-        rows.push([
-          data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, 0, 0),
-          data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, 0, 0),
-        ]);
-      }
-      for (let s = 0; s < SEGS; s++) {
-        data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
-      }
-    }
+    seaweedClump(data, p.x, p.z, rand);
   }
-  const mat = new THREE.MeshStandardMaterial({
-    vertexColors: true, roughness: 0.32, side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(data.build(), mat);
+  const mesh = new THREE.Mesh(data.build(), seaweedMaterial());
   mesh.receiveShadow = true;
   group.add(mesh);
+}
+
+// A tangle of wrack: a few limp ribbons flung down where the last high tide
+// left them, lying flat on the sand.
+export function seaweedClump(data, x, z, rand, ground = islandHeight) {
+  const ribbons = 2 + Math.floor(rand() * 4);
+  for (let rb = 0; rb < ribbons; rb++) {
+    const a = rand() * Math.PI * 2;
+    const len = 0.35 + rand() * 0.6;
+    const w = 0.02 + rand() * 0.02;
+    const g0 = 0.7 + rand() * 0.5;
+    const col = [0.13 * g0, 0.17 * g0, 0.08 * g0];
+    const sx = x + (rand() - 0.5) * 0.5, sz = z + (rand() - 0.5) * 0.5;
+    const rows = [];
+    const SEGS = 4;
+    for (let s = 0; s <= SEGS; s++) {
+      const t = s / SEGS;
+      const wob = Math.sin(t * 9 + rb * 3) * 0.06;
+      const px = sx + Math.cos(a) * len * t + Math.cos(a + Math.PI / 2) * wob;
+      const pz = sz + Math.sin(a) * len * t + Math.sin(a + Math.PI / 2) * wob;
+      const py = ground(px, pz) + 0.012 + Math.sin(t * Math.PI) * 0.015;
+      const sideA = Math.cos(a + Math.PI / 2) * w * (1 - t * 0.5);
+      const sideB = Math.sin(a + Math.PI / 2) * w * (1 - t * 0.5);
+      rows.push([
+        data.vert(new THREE.Vector3(px - sideA, py, pz - sideB), 0, t, col, 0, 0),
+        data.vert(new THREE.Vector3(px + sideA, py, pz + sideB), 1, t, col, 0, 0),
+      ]);
+    }
+    for (let s = 0; s < SEGS; s++) {
+      data.quad(rows[s][0], rows[s][1], rows[s + 1][0], rows[s + 1][1]);
+    }
+  }
+}
+
+export function seaweedMaterial() {
+  return new THREE.MeshStandardMaterial({
+    vertexColors: true, roughness: 0.32, side: THREE.DoubleSide,
+  });
 }
 
 export function buildScatter() {
