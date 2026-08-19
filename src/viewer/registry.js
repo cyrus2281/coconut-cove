@@ -20,6 +20,7 @@ import { buildShark } from '../creatures/shark.js';
 import { buildButterflyWings, BUTTERFLY_TINTS } from '../creatures/butterfly.js';
 import { silversideAsset } from '../creatures/shorefish.js';
 import { PROPS } from './props.js';
+import { WEATHER_EXHIBITS } from './weathers.js';
 import { AUDIO_TRACKS } from './tracks.js';
 
 // the species library is session-shared in the viewer (its geometries and
@@ -418,4 +419,4 @@ export const CREATURES = [
   },
 ];
 
-export const REGISTRY = [...CREATURES, ...PROPS, ...AUDIO_TRACKS];
+export const REGISTRY = [...CREATURES, ...PROPS, ...WEATHER_EXHIBITS, ...AUDIO_TRACKS];

@@ -196,7 +196,10 @@ export class OceanAudio {
         l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * beach, now, 0.3);
         l.filter.frequency.setTargetAtTime(l.baseFreq * (0.7 + swell * 1.2), now, 0.3);
       } else if (l.kind === 'wind') {
-        const g = (0.06 + swell * l.gainMax) * (1 + hRel * 0.22 + storm * 2.4);
+        // keyed to the actual wind, so a fresh breeze roars under a blue sky
+        // and a windless mist goes hushed; the squall's gloom stacks on top
+        const g = (0.06 + swell * l.gainMax)
+          * (0.25 + 0.75 * windAmp + hRel * 0.22 + storm * 1.2);
         l.g.gain.setTargetAtTime(g, now, 0.5);
       } else if (l.kind === 'rustle') {
         let prox = 0, best = null;
@@ -326,6 +329,44 @@ export class OceanAudio {
     const now = this.ctx.currentTime;
     this.rainHi.g.gain.setTargetAtTime(k * 0.5, now, 0.8);
     this.rainLo.g.gain.setTargetAtTime(k * 0.28, now, 0.8);
+  }
+
+  // a thunderclap, `delay` seconds after its flash: distant strikes arrive as
+  // pure rumble, close ones lead with the tearing crack overhead
+  thunder(delay = 1, intensity = 1) {
+    if (!this.ctx || this.muted) return;
+    const ctx = this.ctx;
+    const at = ctx.currentTime + delay;
+    const close = Math.max(1 - delay / 3, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = this.noiseBuf;
+    src.loop = true;
+    src.playbackRate.value = 0.4 + Math.random() * 0.2;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(90 + close * 170, at);
+    lp.frequency.exponentialRampToValueAtTime(45, at + 2.4);
+    const g = ctx.createGain();
+    const amp = (0.5 + 0.5 * close) * 0.55 * intensity;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(Math.max(amp, 0.001), at + 0.06 + (1 - close) * 0.35);
+    g.gain.exponentialRampToValueAtTime(0.001, at + 2.2 + Math.random() * 1.3);
+    src.connect(lp).connect(g).connect(this.fx);
+    src.start(at, Math.random() * 3);
+    src.stop(at + 4.2);
+    if (close > 0.4) {
+      const c = ctx.createBufferSource();
+      c.buffer = this.noiseBuf;
+      c.playbackRate.value = 1.5;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 900;
+      const cg = ctx.createGain();
+      cg.gain.setValueAtTime(0.4 * close * intensity, at);
+      cg.gain.exponentialRampToValueAtTime(0.001, at + 0.5);
+      c.connect(hp).connect(cg).connect(this.fx);
+      c.start(at, Math.random() * 3, 0.6);
+    }
   }
 
   // Listen to one thing at a time. `null` is the island's full mix; a layer

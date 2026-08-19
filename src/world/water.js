@@ -197,6 +197,8 @@ uniform vec3 uFogColor;
 uniform float uFogDensity;
 uniform float uNightF;
 uniform float uStorm;
+uniform float uRain;
+uniform float uWindAmp;
 uniform int uDebug;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
@@ -245,11 +247,13 @@ void main() {
   // rain pocks the surface: fast-scrolling high-frequency jitter
   float dimple = (texture2D(uFoamTex, vWPos.xz * 1.9 + uTime * vec2(2.9, 3.7)).r - 0.5)
                + (texture2D(uFoamTex, vWPos.xz * 2.7 - uTime * vec2(3.4, 2.6)).r - 0.5);
-  float chop = 1.0 + 0.9 * uStorm;
+  // the wind roughens the surface on its own (a fresh breeze under a blue
+  // sky, glass under a windless mist); the squall piles more on top
+  float chop = 0.85 + 0.15 * uWindAmp + 0.75 * uStorm;
   vec3 N = normalize(vec3(
-    vNormalGeo.x * geoFade + dn.x * (0.30 * detailFade + 0.045) * chop + dimple * 0.34 * uStorm * detailFade,
+    vNormalGeo.x * geoFade + dn.x * (0.30 * detailFade + 0.045) * chop + dimple * 0.34 * uRain * detailFade,
     1.0,
-    vNormalGeo.z * geoFade + dn.y * (0.30 * detailFade + 0.045) * chop + dimple * 0.30 * uStorm * detailFade
+    vNormalGeo.z * geoFade + dn.y * (0.30 * detailFade + 0.045) * chop + dimple * 0.30 * uRain * detailFade
   ));
 
   float NdV = max(dot(N, V), 0.0);
@@ -405,6 +409,8 @@ export function buildOcean(heightTex) {
       uFogDensity: uniforms.uFogDensity,
       uNightF: uniforms.uNightF,
       uStorm: uniforms.uStorm,
+      uRain: uniforms.uRain,
+      uWindAmp: uniforms.uWindAmp,
     },
   });
 

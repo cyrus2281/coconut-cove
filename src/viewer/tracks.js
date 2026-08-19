@@ -64,15 +64,17 @@ export const AUDIO_TRACKS = [
   }),
   track({
     id: 'aud-wind', label: 'wind', layer: 'wind',
-    blurb: 'the wind bed, thin down on the sand and rising over the dune tops. A squall multiplies it by three and a half.',
+    blurb: 'the wind bed, thin down on the sand and rising over the dune tops. It follows the actual blow, so a fresh breeze roars under a blue sky and a squall stacks its gloom on top.',
     anims: [
       { id: 'shore', label: 'down on the sand' },
+      { id: 'breeze', label: 'fresh breeze' },
       { id: 'dune', label: 'on the dune tops' },
       { id: 'squall', label: 'squall' },
     ],
     apply(s, pose) {
       s.stand(ZONES[0].az, pose === 'dune' ? 4 : 0);
-      if (pose === 'squall') s.storm(1);
+      if (pose === 'breeze') s.wind(2.3);
+      if (pose === 'squall') { s.storm(1); s.wind(2.7); }
     },
   }),
   track({
@@ -166,6 +168,17 @@ export const AUDIO_TRACKS = [
     ],
     apply(s) { s.stand(ZONES[0].az, 0); },
     shot(audio, s) { audio.splash(s.pose === 'dive' ? 1 : 0.25); },
+  }),
+  track({
+    id: 'aud-thunder', label: 'thunder', layer: 'fx',
+    blurb: 'a strike from the cell overhead. Distant bolts arrive seconds late as pure rumble; close ones lead with the tearing crack.',
+    spec: 'looped noise · lowpass 260 falling to 45 Hz · 2 to 3.5 s decay · close: highpass 900 Hz crack',
+    anims: [
+      { id: 'close', label: 'right overhead' },
+      { id: 'far', label: 'out at sea' },
+    ],
+    apply(s) { s.stand(ZONES[0].az, 1); s.storm(1); s.wind(3.1); s.rain(0.6); },
+    shot(audio, s) { audio.thunder(s.pose === 'far' ? 2.6 : 0.5, 1); },
   }),
   track({
     id: 'aud-bubble', label: 'bubble', layer: 'fx',

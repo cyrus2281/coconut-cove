@@ -28,6 +28,8 @@ uniform float uTime;
 uniform float uSunI;
 uniform float uNightF;
 uniform float uStorm;
+uniform float uRain;
+uniform float uWindAmp;
 uniform float uRainWet;
 uniform float uFogDensity;
 uniform vec3 uSunDir;
@@ -47,7 +49,7 @@ float rip(vec2 p) {
   float a = texture2D(uRipple, p * 0.62 + vec2(uTime * 0.018, uTime * 0.012)).r;
   float b = texture2D(uRipple, p * 1.05 - vec2(uTime * 0.015, uTime * 0.022)).r;
   float d = texture2D(uRipple, p * 5.5 + vec2(uTime * 1.3, uTime * 1.6)).r;
-  return a + b + d * uStorm * 1.1;
+  return a + b + d * uRain * 1.1;
 }
 
 void main() {
@@ -59,7 +61,8 @@ void main() {
   float h0 = rip(vWPos.xz);
   float hx = rip(vWPos.xz + vec2(e, 0.0));
   float hz = rip(vWPos.xz + vec2(0.0, e));
-  float amp = 0.05 * (1.0 + 2.6 * uStorm);
+  // the wind ruffles the sheet even without a squall; a still mist leaves it glassy
+  float amp = 0.05 * (0.55 + 0.45 * uWindAmp + 1.5 * uStorm);
   vec3 N = normalize(vec3(-(hx - h0) * amp, e, -(hz - h0) * amp));
 
   vec3 V = normalize(cameraPosition - vWPos);
@@ -159,6 +162,8 @@ export function pondMaterial() {
       uSunI: uniforms.uSunI,
       uNightF: uniforms.uNightF,
       uStorm: uniforms.uStorm,
+      uRain: uniforms.uRain,
+      uWindAmp: uniforms.uWindAmp,
       uRainWet: uniforms.uRainWet,
       uFogDensity: uniforms.uFogDensity,
       uSunDir: uniforms.uSunDir,

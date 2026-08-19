@@ -784,3 +784,29 @@ export function cloudTexture(seed = 71) {
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   return track(t);
 }
+
+// ---------------------------------------------------------------- rainbow arc
+// A half-annulus of soft spectral bands on a transparent sheet, violet in,
+// red out. One radial gradient draws the whole arc, so every edge stays soft;
+// the canvas bottom cuts the feet off, which is where the sea will sit.
+export function rainbowTexture() {
+  const W = 512, H = 256;
+  const [c, ctx] = makeCanvas(W, H);
+  ctx.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H;
+  const R = H * 0.88;
+  const g = ctx.createRadialGradient(cx, cy, R * 0.62, cx, cy, R);
+  g.addColorStop(0.00, 'rgba(255,255,255,0)');
+  g.addColorStop(0.30, 'rgba(150,110,240,0.26)');
+  g.addColorStop(0.42, 'rgba(90,150,250,0.4)');
+  g.addColorStop(0.54, 'rgba(90,215,140,0.48)');
+  g.addColorStop(0.66, 'rgba(250,235,110,0.55)');
+  g.addColorStop(0.78, 'rgba(255,170,70,0.5)');
+  g.addColorStop(0.90, 'rgba(255,90,80,0.42)');
+  g.addColorStop(1.00, 'rgba(255,90,80,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  const t = tex(c, { repeat: false });
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return track(t);
+}
