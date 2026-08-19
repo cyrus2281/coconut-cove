@@ -25,6 +25,13 @@ const HANDOVER = 0.12;
 const SUN_PEAK = 0.80, MOON_PEAK = 0.70;  // noon / midnight elevations
 const SUN_DIP = 0.50, MOON_DIP = 0.40;    // how deep the off-duty body rides
 
+// The two moments sleeping in the hammock aims at, read straight off the arc
+// above: sunrise/sunset are where the sun's elevation crosses the horizon on
+// the way up and down, midnight is the middle of the moon's window.
+const SUNRISE_TOD = DAY_FRAC * Math.asin(HANDOVER / (SUN_PEAK + HANDOVER)) / Math.PI;
+const SUNSET_TOD = DAY_FRAC - SUNRISE_TOD;
+const MIDNIGHT_TOD = DAY_FRAC + (1 - DAY_FRAC) / 2;
+
 const sstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
   return t * t * (3 - 2 * t);
@@ -497,6 +504,15 @@ export function buildSky(scene, renderer, camera) {
     setTod(v) { tod = ((v % 1) + 1) % 1; },
     getTod: () => tod,
     warp(s) { tod = (tod + s / DAY_CYCLE_SECONDS) % 1; },
+    // Where a sleep in the hammock lands, and how many seconds of clock it
+    // takes to get there: doze off in daylight and you wake at midnight,
+    // sleep through the dark and you wake with the sun on the horizon.
+    sleepSpan() {
+      const daylight = tod >= SUNRISE_TOD && tod < SUNSET_TOD;
+      const target = daylight ? MIDNIGHT_TOD : SUNRISE_TOD;
+      const frac = (((target - tod) % 1) + 1) % 1;
+      return { target, daylight, seconds: frac * DAY_CYCLE_SECONDS };
+    },
     meteor: (dur, azHint) => spawnMeteor(dur, azHint), // debug: force one now
   };
 }
