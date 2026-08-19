@@ -35,6 +35,7 @@ import { buildSealife } from './world/sealife.js';
 import { buildUnderwater } from './world/underwater.js';
 import { Player } from './player.js';
 import { buildTouchUI } from './touchui.js';
+import { buildSleep } from './sleep.js';
 import { OceanAudio } from './audio.js';
 
 const canvas = document.getElementById('scene');
@@ -68,6 +69,9 @@ const player = new Player(camera, canvas);
 player.onStep = footprints.stamp;
 player.onSplash = (k) => audio.splash(k);
 
+// sleeping in the hammock: the fade to black and the clock jump behind it
+const sleepFx = buildSleep(sky, warpClock);
+
 let world = null;
 
 function buildWorldNow() {
@@ -100,7 +104,7 @@ function buildWorldNow() {
   scene.add(butterflies.group);
   const coconuts = buildCoconuts(player, palms.trees, audio);
   scene.add(coconuts.group);
-  const hammock = buildHammock(player, palms.trees, camera);
+  const hammock = buildHammock(player, palms.trees, camera, () => sleepFx.sleep());
   scene.add(hammock.group);
   const crabs = buildCrabs(player, footprints);
   scene.add(crabs.group);
@@ -225,6 +229,7 @@ updateSeedTag();
 // It lives in the world, not on the title screen, so it only appears once
 // you've walked out onto the beach
 function regenerateIsland() {
+  if (sleepFx.sleeping()) return; // eyes shut: no rerolling the island in the dark
   regenBtn.blur(); // drop focus, or the next Space (jump) re-triggers the button
   regenBtn.classList.remove('spun');
   void regenBtn.offsetWidth; // restart the glyph spin
@@ -257,6 +262,7 @@ canvas.addEventListener('touchstart', () => {
   if (player.enabled && !touchUI.active) touchUI.show();
 }, { passive: true });
 window.addEventListener('keydown', (e) => {
+  if (e.repeat) return; // holding a key is one press, not a stream of them
   if (e.code === 'KeyM') {
     audio.setMuted(!audio.muted);
     muteBtn.classList.toggle('muted', audio.muted);
@@ -282,6 +288,13 @@ window.addEventListener('resize', () => {
 const clock = new THREE.Clock();
 let t = 0;
 let fpsEMA = 60;
+
+// jump the world clock forward (waves, drying sand, footprint age; the sky
+// and with it the tide, unless told to leave the hour where it is)
+function warpClock(s, skyToo = true) {
+  t += s;
+  if (skyToo) sky.warp(s);
+}
 
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -356,9 +369,11 @@ window.__beach = {
   info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, fps: Math.round(fpsEMA) }),
   height: islandHeight,
   enter: enterWorld,
-  // jump the world clock forward (waves, drying sand, footprint age;
-  // pass false to leave the sky/time-of-day where it is)
-  warp(s, skyToo = true) { t += s; if (skyToo) sky.warp(s); },
+  // jump the world clock forward (pass false to leave the hour where it is)
+  warp: warpClock,
+  // doze off in the hammock from anywhere: fade out, jump to midnight or
+  // sunrise, fade back in
+  sleep: () => sleepFx.sleep(),
   setTod(v) { sky.setTod(v); },
   getTod: () => sky.getTod(),
   tide: () => ({

@@ -193,6 +193,16 @@
     }
     #uw.on { opacity: 1; }
 
+    /* sleeping in the hammock: the world dims out, then opens on a new hour.
+       JS sets the duration for each leg of the fade; the stacking order goes
+       over every control, the ⟳ button included, so nothing floats in the dark */
+    #fade {
+      position: fixed; inset: 0; pointer-events: none; z-index: 21;
+      background: #000; opacity: 0;
+      transition: opacity 1.8s ease;
+    }
+    #fade.on { opacity: 1; }
+
     /* floating messages (swim hint, boundary current) */
     .covePill {
       position: fixed; left: 50%; top: 15%; transform: translateX(-50%);
@@ -221,6 +231,7 @@
   <canvas id="scene"></canvas>
   <div id="uw"></div>
   <div id="vignette"></div>
+  <div id="fade"></div>
 
   <div id="boundPill" class="covePill">you can't swim any further.</div>
   <div id="swimHint" class="covePill"><span class="kb">you're swimming · dive where you look · <b>space</b> floats up · <b>C</b> sinks down</span><span class="tc">you're swimming · look down to dive · FLOAT rises · DIVE sinks</span></div>
@@ -239,7 +250,7 @@
       <span><b>shift</b>run</span>
       <span><b>space</b>jump · float</span>
       <span><b>C</b>dive</span>
-      <span><b>E</b>hammock</span>
+      <span><b>E</b>hammock · sleep</span>
       <span><b>R</b>new island</span>
       <span><b>M</b>sound</span>
     </div>

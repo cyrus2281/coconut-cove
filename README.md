@@ -32,7 +32,7 @@ favorite with `http://localhost:5173/?seed=12345`.
 | `Shift` | run · swim faster |
 | `Space` | jump · float up |
 | `C` | sink down / dive |
-| `E` | lie back in the hammock (any move key gets you up) |
+| `E` | lie back in the hammock, again to sleep (any move key gets you up) |
 | `R` | grow a brand-new island (same as the ⟳ button, seed lands in the URL) |
 | `M` | toggle ocean sound |
 | touch | 📱 button on the title screen: on-screen joystick + JUMP, drag the world to look (auto-enables on first touch) |
@@ -104,7 +104,9 @@ Everything is generated at startup from seeded noise — geometry, textures
 - **Small joys** — butterflies over the day grass and fireflies over the
   night grass; loose coconuts you can punt down the beach and watch the
   surf strand back on the wet sand; a striped hammock between two palms
-  (`E` to lie back and watch the fronds, clouds and shooting stars).
+  (`E` to lie back and watch the fronds, clouds and shooting stars, `E`
+  again to sleep: the screen fades out and you wake at midnight, or at
+  sunrise if you turned in after dark).
 - **Snorkeling** — wade past chest depth and you're swimming: float at the
   surface riding the swell, look down and kick to dive. Below, the world
   changes — sea-water fog that darkens with depth, the sky visible only
