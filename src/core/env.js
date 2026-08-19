@@ -30,8 +30,11 @@ export const uniforms = {
   uNightF: { value: 0 }, // 0 by day → 1 in full night (drives bioluminescence)
   uTide: { value: 0 },    // current tide level (m, about mean sea level y=0)
   uTideAng: { value: 0 }, // current tide angle (rad) — see swash.js sw_tideSince
-  uStorm: { value: 0 },   // squall intensity 0..1 (sky dims, sea grays, chop rises)
+  uStorm: { value: 0 },   // cloud/gloom 0..1 (sky dims, sea grays, chop rises)
+  uRain: { value: 0 },    // rainfall right now 0..1 (streaks, patter, pond dimples)
   uRainWet: { value: 0 }, // rain-soaked ground 0..1 (rises with rain, dries slowly)
+  uFogW: { value: 0 },    // sea-mist thickness 0..1 (milky air, the horizon goes)
+  uFlash: { value: 0 },   // lightning envelope; sky.js lights the world with it
   uFogColor: { value: FOG_COLOR.clone() },
   uFogDensity: { value: FOG_DENSITY },
   uUW: { value: 0 },      // 0 above water → 1 with the camera fully submerged

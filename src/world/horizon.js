@@ -259,6 +259,11 @@ export function buildHorizon() {
   }
 
   function update(t) {
+    // thick air (mist, a hard squall) swallows the skyline whole: past this
+    // density every landform is ≥95% fogged, and leaving them drawn shows
+    // fog-colored cutouts against the sky dome's own haze
+    group.visible = uniforms.uFogDensity.value < 0.0013;
+    if (!group.visible) return;
     for (const v of volcanoes) updatePlume(v, t);
   }
 

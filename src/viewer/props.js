@@ -647,6 +647,7 @@ export const PROPS = [
           // the sheet dimples and swells under rain, and the reeds thrash
           const rain = state.anim === 'rain' ? 1 : 0;
           uniforms.uStorm.value += (rain - uniforms.uStorm.value) * Math.min(dt * 2, 1);
+          uniforms.uRain.value += (rain - uniforms.uRain.value) * Math.min(dt * 2, 1);
           uniforms.uRainWet.value += (rain - uniforms.uRainWet.value) * Math.min(dt * 2, 1);
           uniforms.uWindAmp.value += ((1 + rain * 1.6) - uniforms.uWindAmp.value) * Math.min(dt * 1.5, 1);
         },

@@ -139,6 +139,32 @@ function applyEnv() {
   document.getElementById('nightBtn').classList.toggle('on', state.night);
 }
 
+// The studio answers the shared weather uniforms the way the island does:
+// gloom dims the lights, mist milks the backdrop, a lightning flash blows
+// both out for a beat. Runs every frame so the weather dioramas (and the
+// campfire's squall pose) read under the sky they claim.
+const _bg = new THREE.Color(), _milk = new THREE.Color();
+function gradeWeather() {
+  const e = ENVS[state.env];
+  const storm = uniforms.uStorm.value;
+  const fogW = uniforms.uFogW.value;
+  const flash = Math.min(uniforms.uFlash.value, 1.2);
+  const nightK = state.night ? 0.12 : 1;
+  const gloom = (1 - 0.55 * storm) * (1 - 0.22 * fogW);
+  key.intensity = e.key * nightK * gloom + flash * 1.6;
+  hemi.intensity = e.hemi[2] * (state.night ? 0.25 : 1) * (1 - 0.35 * storm) + flash * 1.2;
+  if (scene.background && scene.background.isColor) {
+    _bg.copy(e.bg).multiplyScalar(state.night ? 0.14 : 1);
+    const lum = _bg.r * 0.3 + _bg.g * 0.5 + _bg.b * 0.2;
+    _milk.setRGB(lum * 0.72, lum * 0.75, lum * 0.78);
+    _bg.lerp(_milk, storm * 0.75);                          // the gray lid
+    _milk.setRGB(0.8, 0.83, 0.86).multiplyScalar(state.night ? 0.16 : 1);
+    _bg.lerp(_milk, fogW * 0.85);                           // the sea mist
+    if (flash > 0.01) _bg.lerp(_milk.setScalar(1), flash * 0.25);
+    scene.background.copy(_bg);
+  }
+}
+
 // ---- creature loading ----
 // A view's optional `dispose` is either a teardown function or a list of
 // resources (geometries, materials) the object tree below doesn't reach.
@@ -225,7 +251,10 @@ function loadCreature(entry, { reseed = false } = {}) {
   // beats the campfire down), so hand the next specimen a calm day
   uniforms.uWindAmp.value = 1;
   uniforms.uStorm.value = 0;
+  uniforms.uRain.value = 0;
   uniforms.uRainWet.value = 0;
+  uniforms.uFogW.value = 0;
+  uniforms.uFlash.value = 0;
 
   state.entry = entry;
 
@@ -378,6 +407,7 @@ renderer.setAnimationLoop(() => {
   if (audioStudio.active) audioStudio.tick(uniforms.uTime.value);
   if (state.turntable) stage.rotation.y += rawDt * 0.5;
   controls.update();
+  gradeWeather();
   // the stage is hidden behind the audio panel; don't pay to draw it
   if (!audioStudio.active) renderer.render(scene, camera);
 

@@ -335,7 +335,8 @@ export function buildSky(scene, renderer, camera) {
   let waterMat = null, pondMat = null;
   let lastBakeT = -100, lastBakeElev = 999;
   const _sunDir = new THREE.Vector3(), _moonDir = new THREE.Vector3();
-  const _c = new THREE.Color();
+  const _c = new THREE.Color(), _c2 = new THREE.Color();
+  const _white = new THREE.Color(1, 1, 1);
 
   // One shape, two shifts: whichever body owns the window arcs up from the
   // handover depth, the other dips below it and comes back up to meet it.
@@ -359,14 +360,17 @@ export function buildSky(scene, renderer, camera) {
     const elevDeg = THREE.MathUtils.radToDeg(sunElev);
     const moonDeg = THREE.MathUtils.radToDeg(moonElev);
     const storm = uniforms.uStorm.value;
+    const fogW = uniforms.uFogW.value;
+    const flash = Math.min(uniforms.uFlash.value, 1.2);
     dirFrom(az, sunElev, _sunDir);
     dirFrom(moonAz, moonElev, _moonDir);
 
     // the sky dome always tracks the true sun (goes dark below the horizon);
-    // squalls load the air with haze until the blue drowns in it
+    // squalls load the air with haze until the blue drowns in it, and a sea
+    // mist whites the whole dome out
     u.sunPosition.value.copy(_sunDir);
-    u.turbidity.value = 3.4 + 17 * storm;
-    u.mieCoefficient.value = 0.009 + 0.028 * storm;
+    u.turbidity.value = Math.min(3.4 + 17 * storm + 11 * fogW, 20);
+    u.mieCoefficient.value = 0.009 + 0.028 * storm + 0.02 * fogW;
 
     // light role
     const sunI = 3.3 * sstep(-1, 12, elevDeg);
@@ -374,29 +378,40 @@ export function buildSky(scene, renderer, camera) {
     const moonRole = moonI > sunI;
     const roleDir = moonRole ? _moonDir : _sunDir;
     sun.position.copy(roleDir).multiplyScalar(180);
-    sun.intensity = Math.max(sunI, moonI, 0.02) * (1 - 0.78 * storm);
+    sun.intensity = Math.max(sunI, moonI, 0.02)
+      * (1 - 0.78 * storm) * (1 - 0.55 * fogW) + flash * 2.4;
     if (moonRole) sun.color.setRGB(0.55, 0.65, 0.95);
     else PAL.light.get(elevDeg, sun.color);
+    if (flash > 0.01) sun.color.lerp(_white, Math.min(flash, 1) * 0.7);
 
     // shared shader uniforms (water spec, caustics, sparkle, footprints)
     uniforms.uSunDir.value.copy(roleDir);
     PAL.sunShared.get(elevDeg, uniforms.uSunColor.value);
-    uniforms.uSunI.value = sstep(-1, 10, elevDeg) + 0.3 * sstep(3, 16, moonDeg);
+    uniforms.uSunI.value = (sstep(-1, 10, elevDeg) + 0.3 * sstep(3, 16, moonDeg))
+      * (1 - 0.45 * fogW);
 
-    // fog + hemisphere (squalls gray the air out and thicken it)
+    // fog + hemisphere (squalls gray the air out and thicken it; a sea mist
+    // buries everything in milk — bright by day, a faint glow by night)
     PAL.fog.get(elevDeg, scene.fog.color);
     if (storm > 0.001) {
       const lum = scene.fog.color.r * 0.3 + scene.fog.color.g * 0.5 + scene.fog.color.b * 0.2;
       _c.setRGB(lum * 0.62, lum * 0.66, lum * 0.7);
       scene.fog.color.lerp(_c, storm * 0.8);
     }
-    scene.fog.density = FOG_DENSITY * (1 + 2.6 * storm);
+    if (fogW > 0.001) {
+      const day = sstep(-3, 10, elevDeg);
+      _c2.setRGB(0.78, 0.82, 0.86).multiplyScalar(0.05 + 0.95 * day);
+      scene.fog.color.lerp(_c2, fogW * 0.85);
+    }
+    if (flash > 0.01) scene.fog.color.lerp(_white, flash * 0.28);
+    scene.fog.density = FOG_DENSITY * (1 + 2.6 * storm) + 0.0135 * Math.pow(fogW, 1.5);
     uniforms.uFogDensity.value = scene.fog.density;
     uniforms.uFogColor.value.copy(scene.fog.color);
     PAL.hemiSky.get(elevDeg, hemi.color);
     PAL.hemiGround.get(elevDeg, hemi.groundColor);
-    hemi.intensity = (0.16 + 0.42 * sstep(-3, 15, elevDeg)) * (1 - 0.4 * storm);
-    scene.environmentIntensity = 0.55 * (1 - 0.5 * storm);
+    hemi.intensity = (0.16 + 0.42 * sstep(-3, 15, elevDeg))
+      * (1 - 0.4 * storm) * (1 - 0.3 * fogW) + flash * 1.5;
+    scene.environmentIntensity = 0.55 * (1 - 0.5 * storm) * (1 - 0.35 * fogW);
 
     // ocean palette
     if (waterMat) {
@@ -414,14 +429,17 @@ export function buildSky(scene, renderer, camera) {
       PAL.waterHorizon.get(elevDeg, pondMat.uniforms.uSkyHorizon.value);
     }
 
-    // clouds, stars, moon (the squall smothers the sky)
+    // clouds, stars, moon (the squall smothers the sky, the mist swallows it,
+    // a lightning flash blows the cloud bellies white)
     PAL.cloud.get(elevDeg, _c);
     _c.multiplyScalar(1 - 0.62 * storm);
+    if (flash > 0.01) _c.addScalar(flash * 1.6);
     for (const cl of clouds) {
       cl.sprite.material.color.copy(_c);
-      cl.sprite.material.opacity = cl.baseOpacity * (1 + 0.5 * storm);
+      cl.sprite.material.opacity = cl.baseOpacity * (1 + 0.5 * storm) * (1 - 0.8 * fogW);
     }
-    starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg)) * (1 - 0.9 * storm);
+    starMat.opacity = 0.85 * (1 - sstep(-11, -3, elevDeg))
+      * (1 - 0.9 * storm) * (1 - 0.92 * fogW);
     uniforms.uNightF.value = 1 - sstep(-10, -2, elevDeg);
 
     // tide rides the same clock
@@ -429,7 +447,8 @@ export function buildSky(scene, renderer, camera) {
     uniforms.uTide.value = tide.level;
     uniforms.uTideAng.value = tide.angle;
     moon.position.copy(_moonDir).multiplyScalar(3100);
-    moon.material.opacity = 0.9 * sstep(1, 8, moonDeg) * (1 - sstep(-2, 6, elevDeg));
+    moon.material.opacity = 0.9 * sstep(1, 8, moonDeg)
+      * (1 - sstep(-2, 6, elevDeg)) * (1 - 0.85 * fogW);
 
     // The baked env follows the sun azimuth by rotation — free and smooth.
     // Negative: the renderer negates the euler ("accommodate left-handed
