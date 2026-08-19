@@ -7,7 +7,7 @@
 // sits believably on the sea floor, whatever island the seed grew.
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, Simplex2 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { islandHeight, shoreRadius, cayCenter } from './island.js';
@@ -22,51 +22,196 @@ function constColor(geo, r, g, b) {
   return geo;
 }
 
-function orientCyl(geo, from, to) {
-  // stand a Y-axis cylinder between two points
-  const dir = new THREE.Vector3().subVectors(to, from);
-  const len = dir.length();
-  dir.normalize();
-  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-  geo.applyQuaternion(q);
-  geo.translate(
-    (from.x + to.x) / 2, (from.y + to.y) / 2, (from.z + to.z) / 2
-  );
-  return { len };
+const sm = (x) => { x = Math.min(Math.max(x, 0), 1); return x * x * (3 - 2 * x); };
+const lerp = THREE.MathUtils.lerp;
+
+// cheap 3D-ish fbm: a 2D slice folded by height, enough for closed surfaces
+function n3(noise, x, y, z, oct = 3) {
+  return noise.fbm(x + y * 0.71, z - y * 0.71, oct);
 }
 
-function canvasTex(w, h, paint, { srgb = true } = {}) {
+// height field (Float32Array, [0,1]) -> tangent-space normal map texture
+function heightNormalTex(field, w, h, strength = 2.0) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  paint(c.getContext('2d'));
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(w, h);
+  const d = img.data;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const xm = (x - 1 + w) % w, xp = (x + 1) % w;
+      const ym = (y - 1 + h) % h, yp = (y + 1) % h;
+      const dx = (field[y * w + xp] - field[y * w + xm]) * strength;
+      const dy = (field[yp * w + x] - field[ym * w + x]) * strength;
+      const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+      const i = (y * w + x) * 4;
+      d[i] = (-dx * inv * 0.5 + 0.5) * 255;
+      d[i + 1] = (-dy * inv * 0.5 + 0.5) * 255;
+      d[i + 2] = inv * 255;
+      d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
-  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.colorSpace = THREE.NoColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   return t;
 }
 
+const _UP = new THREE.Vector3(0, 1, 0);
+const _q = new THREE.Quaternion();
+const _v3 = new THREE.Vector3();
+
+// A tapered, bendable tube grown up +Y from the origin: k in [0,1] runs
+// base -> tip, radius from rFn(k), spine offset from bendFn(k) -> [dx, dz].
+function bentCone(len, radial, hSegs, rFn, bendFn, openEnded = false) {
+  const geo = new THREE.CylinderGeometry(1, 1, 1, radial, hSegs, openEnded);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const k = p.getY(i) + 0.5;
+    const r = Math.max(rFn(k), 0.0002);
+    const b = bendFn ? bendFn(k) : null;
+    p.setXYZ(i,
+      p.getX(i) * r + (b ? b[0] : 0),
+      k * len,
+      p.getZ(i) * r + (b ? b[1] : 0));
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// stand a +Y-grown geometry at `from`, pointing along `dir` (unit)
+function orientAt(geo, from, dir) {
+  _q.setFromUnitVectors(_UP, dir);
+  geo.applyQuaternion(_q);
+  geo.translate(from.x, from.y, from.z);
+  return geo;
+}
+
+// An indexed polar grid: one center vertex plus `rings` rings of `segs`
+// vertices placed by posFn(u, theta, out), u in (0,1]. Gives surfaces real
+// interior vertices to displace (the extrude caps only have rim verts).
+// flip=true winds it to face +Y.
+function discGrid(rings, segs, posFn, flip = false) {
+  const verts = [], uvs = [];
+  const _o = new THREE.Vector3();
+  const push = (u, th) => {
+    posFn(u, th, _o);
+    verts.push(_o.x, _o.y, _o.z);
+    uvs.push(_o.x + 0.5, _o.z + 0.5);
+  };
+  push(0, 0);
+  for (let r = 1; r <= rings; r++) {
+    for (let s = 0; s < segs; s++) push(r / rings, (s / segs) * Math.PI * 2);
+  }
+  const idx = [];
+  const tri = (a, b, c) => { if (flip) idx.push(a, c, b); else idx.push(a, b, c); };
+  for (let s = 0; s < segs; s++) tri(0, 1 + s, 1 + ((s + 1) % segs));
+  for (let r = 0; r < rings - 1; r++) {
+    const a0 = 1 + r * segs, b0 = 1 + (r + 1) * segs;
+    for (let s = 0; s < segs; s++) {
+      const s1 = (s + 1) % segs;
+      tri(a0 + s, b0 + s, b0 + s1);
+      tri(a0 + s, b0 + s1, a0 + s1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// A tube swept through world-space ring centers with per-ring radii and
+// colors, using parallel-transported frames so it never twists. Open ends;
+// taper the last radius to ~0 to close a tip visually.
+function sweepTube(cents, radii, colors, radial) {
+  const n = cents.length;
+  const verts = [], cols = [], uvs = [], idx = [];
+  const t = new THREE.Vector3(), nrm = new THREE.Vector3(), bin = new THREE.Vector3();
+  for (let j = 0; j < n; j++) {
+    const a = cents[Math.max(j - 1, 0)], b = cents[Math.min(j + 1, n - 1)];
+    t.subVectors(b, a).normalize();
+    if (j === 0) {
+      nrm.set(t.y, -t.x, 0);
+      if (nrm.lengthSq() < 1e-6) nrm.set(0, -t.z, t.y);
+      nrm.normalize();
+    } else {
+      nrm.addScaledVector(t, -nrm.dot(t)).normalize(); // parallel transport
+    }
+    bin.crossVectors(t, nrm);
+    const r = radii[j], c = colors[j], cc = cents[j];
+    for (let s = 0; s < radial; s++) {
+      const a2 = (s / radial) * Math.PI * 2;
+      const ca = Math.cos(a2), sa = Math.sin(a2);
+      verts.push(
+        cc.x + (nrm.x * ca + bin.x * sa) * r,
+        cc.y + (nrm.y * ca + bin.y * sa) * r,
+        cc.z + (nrm.z * ca + bin.z * sa) * r);
+      cols.push(c[0], c[1], c[2]);
+      uvs.push(s / radial, j / (n - 1));
+    }
+  }
+  for (let j = 0; j < n - 1; j++) {
+    const a0 = j * radial, b0 = (j + 1) * radial;
+    for (let s = 0; s < radial; s++) {
+      const s1 = (s + 1) % radial;
+      idx.push(a0 + s, b0 + s1, b0 + s, a0 + s, a0 + s1, b0 + s1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 // ------------------------------------------------------------- geometries
-// weathered reef boulder, colored by noise (gray stone, coralline pink
-// crusts, a green algae skirt near the base)
+// weathered reef boulder: fbm lumps over a fine icosphere, sharp -|noise|
+// gouges for crevices (darkened like ambient shadow), colored as gray
+// limestone under blotches of coralline pink crust, an algae film in the
+// hollows and a pale sand dusting across the top
 function rockGeo(seed) {
   const rand = mulberry32(seed);
   const noise = new Simplex2(seed);
-  const geo = new THREE.IcosahedronGeometry(1, 2);
+  // weld the icosphere so the displaced surface shades smooth, not faceted
+  // (three's icosahedron detail is linear: 14 -> 20*15^2 = 4500 faces)
+  const geo = mergeVertices(new THREE.IcosahedronGeometry(1, 14));
   const p = geo.attributes.position;
   const n = p.count;
   const col = new Float32Array(n * 3);
   const ph = rand() * 40;
+  const v = new THREE.Vector3();
   for (let i = 0; i < n; i++) {
-    const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i));
-    const d = 1 + noise.fbm(v.x * 1.3 + ph, v.z * 1.3 + v.y, 3) * 0.38;
-    v.multiplyScalar(d);
-    v.y *= 0.72;
+    v.set(p.getX(i), p.getY(i), p.getZ(i)).normalize();
+    const lump = noise.fbm(v.x * 1.3 + ph, v.z * 1.3 + v.y * 1.1, 3) * 0.30;
+    // ridged noise folds sharp creases into the faces
+    const ridge = (0.55 - Math.abs(n3(noise, v.x * 3.3 + ph, v.y * 3.3, v.z * 3.3, 3))) * 0.17;
+    const gouge = -Math.abs(n3(noise, v.x * 7.0 - ph, v.y * 7.0, v.z * 7.0, 2)) * 0.09;
+    const fine = n3(noise, v.x * 14, v.y * 14, v.z * 14, 2) * 0.02;
+    v.multiplyScalar(1 + lump + ridge + gouge + fine);
+    v.y *= 0.7;
     p.setXYZ(i, v.x, v.y, v.z);
-    const m = noise.fbm(v.x * 2.2 + ph * 2, v.z * 2.2 - v.y * 1.5, 3);
-    let r = 0.30, g = 0.28, b = 0.26; // gray stone
-    if (m > 0.2) { r = 0.66; g = 0.30; b = 0.40; }        // coralline pink
-    else if (m < -0.22) { r = 0.18; g = 0.32; b = 0.16; } // algae film
-    const shade = 0.8 + 0.2 * (v.y + 1) * 0.5;
+
+    const crust = n3(noise, v.x * 2.1 + ph * 2, v.y * 1.7, v.z * 2.1, 3);
+    const grain = n3(noise, v.x * 12 + ph, v.y * 12, v.z * 12, 2);
+    let r = 0.28 + grain * 0.09, g = 0.26 + grain * 0.08, b = 0.23 + grain * 0.07;
+    if (crust > 0.32) {          // coralline pink crust, in patches only
+      const k = sm((crust - 0.32) / 0.12) * 0.8;
+      r = lerp(r, 0.44, k); g = lerp(g, 0.22, k); b = lerp(b, 0.28, k);
+    } else if (crust < -0.3) {   // olive algae film in the hollows
+      const k = sm((-crust - 0.3) / 0.12) * 0.85;
+      r = lerp(r, 0.10, k); g = lerp(g, 0.19, k); b = lerp(b, 0.08, k);
+    }
+    // pale sand/bleach dusting settles on the upward shoulders
+    const dust = Math.min(Math.max((v.y - 0.3) * 1.1, 0), 0.3) * (0.5 + 0.5 * grain);
+    r = lerp(r, 0.62, dust); g = lerp(g, 0.57, dust); b = lerp(b, 0.45, dust);
+    // crevices read as shadow, tops catch the light
+    const ao = Math.max(1 + gouge * 9.0 + (ridge < 0 ? ridge * 2.5 : 0), 0.34);
+    const shade = (0.72 + 0.28 * Math.min(Math.max(v.y + 0.5, 0), 1)) * ao;
     col[i * 3] = r * shade; col[i * 3 + 1] = g * shade; col[i * 3 + 2] = b * shade;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -74,177 +219,363 @@ function rockGeo(seed) {
   return geo;
 }
 
-// brain coral: a squashed hemisphere with ridge-wobble, wearing a painted
-// maze of meandering grooves
+// brain coral: a lumpy dome wearing real meandering ridge-and-valley folds.
+// Contour bands of a domain-warped fbm field displace the surface outward
+// (fbm contours meander and reconnect exactly like a brain-coral maze) and
+// the vertex colors shade the valleys dark so the pattern reads at distance.
 function brainGeo(seed) {
   const noise = new Simplex2(seed);
-  const geo = new THREE.SphereGeometry(1, 40, 24, 0, Math.PI * 2, 0, Math.PI / 2);
+  const noiseB = new Simplex2((seed ^ 0x5f356495) >>> 0);
+  const geo = new THREE.SphereGeometry(1, 96, 48, 0, Math.PI * 2, 0, Math.PI / 2);
   const p = geo.attributes.position;
+  const col = new Float32Array(p.count * 3);
+  const v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
-    const v = new THREE.Vector3(p.getX(i), p.getY(i), p.getZ(i));
-    const d = 1 + noise.fbm(v.x * 2.4, v.z * 2.4 + v.y * 1.8, 3) * 0.12;
-    v.multiplyScalar(d);
+    v.set(p.getX(i), p.getY(i), p.getZ(i));
+    const dome = 1 + n3(noise, v.x * 1.4, v.y * 1.4, v.z * 1.4, 3) * 0.09;
+    // the maze: triangle-wave contour bands of a warped noise field. Kept
+    // low-frequency so the folds stay fat and smooth at this mesh density.
+    const warp = n3(noiseB, v.x * 1.6, v.y * 1.6, v.z * 1.6, 2) * 0.8;
+    const f = n3(noise, v.x * 1.7 + warp, v.y * 1.7, v.z * 1.7 - warp, 3);
+    const s = f * 5.0;
+    const tri = Math.abs(s - Math.floor(s) - 0.5) * 2;
+    const ridge = sm((tri - 0.26) / 0.52);
+    const fade = sm((v.y - 0.02) / 0.14);        // grooves die out at the skirt
+    const polyp = n3(noiseB, v.x * 16, v.y * 16, v.z * 16, 2) * 0.006;
+    v.multiplyScalar(dome + (ridge - 0.5) * 0.09 * fade + polyp);
     v.y *= 0.62;
     p.setXYZ(i, v.x, v.y, v.z);
+
+    // valleys dark olive-brown, crests sun-warmed tan drifting greenish
+    const tint = n3(noise, v.x * 0.9 + 7.3, v.y * 0.9, v.z * 0.9, 2);
+    const rr = lerp(0.22, 0.62, ridge) - Math.max(tint, 0) * 0.12;
+    const gg = lerp(0.12, 0.44, ridge) + tint * 0.05;
+    const bb = lerp(0.07, 0.24, ridge) - Math.max(tint, 0) * 0.06;
+    const spec = 1 + polyp * 10;
+    col[i * 3] = rr * spec; col[i * 3 + 1] = gg * spec; col[i * 3 + 2] = bb * spec;
   }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.computeVertexNormals();
   return geo;
 }
 
-function brainTexture() {
-  return canvasTex(256, 256, (ctx) => {
-    const rand = mulberry32(4021);
-    ctx.fillStyle = '#b98d63';
-    ctx.fillRect(0, 0, 256, 256);
-    // meandering grooves: dark channel with a bright ridge alongside
-    for (let i = 0; i < 60; i++) {
-      let x = rand() * 256, y = rand() * 256;
-      let a = rand() * Math.PI * 2;
-      ctx.lineWidth = 4.5;
-      ctx.lineCap = 'round';
-      for (const [col, off] of [['#7a5136', 0], ['#d8b183', 2.6]]) {
-        ctx.strokeStyle = col;
-        ctx.beginPath();
-        let px = x + off, py = y + off, pa = a;
-        ctx.moveTo(px, py);
-        for (let s = 0; s < 14; s++) {
-          pa += (rand() - 0.5) * 1.4;
-          px += Math.cos(pa) * 9;
-          py += Math.sin(pa) * 9;
-          ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.lineWidth = 3;
+// fine corallite stipple, tiled small over the dome for close-up detail
+function brainDetailNormal() {
+  const S = 128;
+  const rand = mulberry32(4021);
+  const field = new Float32Array(S * S).fill(0.5);
+  for (let i = 0; i < 900; i++) {
+    const x = Math.floor(rand() * S), y = Math.floor(rand() * S);
+    const r = 1 + rand() * 2, d = rand() < 0.5 ? -0.3 : 0.3;
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        const q = Math.hypot(dx, dy) / r;
+        if (q > 1) continue;
+        const xi = (x + dx + S) % S, yi = (y + dy + S) % S;
+        field[yi * S + xi] += d * (1 - q * q);
       }
     }
-  });
+  }
+  const t = heightNormalTex(field, S, S, 1.6);
+  t.repeat.set(7, 3.5);
+  return t;
 }
 
-// staghorn coral: a recursive thicket of tapering branches, tips bleaching
-// to cream
+// staghorn coral: a recursive thicket of curved, knobby, tapering branches.
+// Each branch is a bent tube with corallite bulges down its length; the
+// first child continues the branch at a shallow angle while the others
+// shoot off the side partway up, the way real staghorn antlers fork. Tips
+// swell slightly and bleach to cream.
 function stagGeo(seed, baseCol, tipCol) {
   const rand = mulberry32(seed);
   const geos = [];
   const MAXD = 3;
-  const _from = new THREE.Vector3(), _to = new THREE.Vector3();
+  const _v = new THREE.Vector3();
   function branch(px, py, pz, dir, len, rad, depth) {
-    _from.set(px, py, pz);
-    _to.copy(_from).addScaledVector(dir, len);
-    // overshoot the joint a hair so child branches bury into their parent
-    const cyl = new THREE.CylinderGeometry(rad * 0.7, rad, len + rad * 1.6, 6, 1);
-    orientCyl(cyl, _from, _to);
-    const k = depth / MAXD;
-    constColor(cyl,
-      baseCol.r + (tipCol.r - baseCol.r) * k,
-      baseCol.g + (tipCol.g - baseCol.g) * k,
-      baseCol.b + (tipCol.b - baseCol.b) * k);
-    geos.push(cyl);
-    if (depth >= MAXD) return;
-    // _to is a shared temp the recursion clobbers: pin this joint down first
-    const jx = _to.x, jy = _to.y, jz = _to.z;
-    const kids = depth === 0 ? 3 : 2;
+    const term = depth >= MAXD;
+    const full = len + rad * 1.6; // overshoot so children bury into parents
+    const ph = rand() * Math.PI * 2;
+    const bx = (rand() - 0.5) * len * 0.4, bz = (rand() - 0.5) * len * 0.4;
+    const wob = (k) => [
+      bx * k * k + Math.sin(k * 5 + ph) * len * 0.015,
+      bz * k * k + Math.cos(k * 4 + ph) * len * 0.015,
+    ];
+    const tube = bentCone(full, 6, 4, (k) => {
+      const taper = 1 - 0.48 * k;
+      const knob = 1 + 0.055 * Math.sin(k * 12.6 + ph);
+      const foot = depth === 0 ? 1 + 0.45 * Math.max(0, 1 - k * 5) : 1;
+      const tip = term ? Math.max(1 - (Math.max(k - 0.8, 0) / 0.2) * 0.8, 0.12) : 1;
+      return rad * taper * knob * foot * tip;
+    }, wob);
+    // color while the tube is still axis-aligned: base->tip gradient, pale
+    // bleached growth tips, corallite bulges catching a touch of light
+    const p = tube.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const k = Math.min(Math.max(p.getY(i) / full, 0), 1);
+      let g = Math.pow((depth + k) / (MAXD + 1), 1.7);
+      if (term && k > 0.7) g = Math.min(g + (k - 0.7) * 2.6, 1);
+      const kb = Math.max(Math.sin(k * 12.6 + ph), 0) * 0.10 + (rand() - 0.5) * 0.06;
+      col[i * 3] = (baseCol.r + (tipCol.r - baseCol.r) * g) * (1 + kb);
+      col[i * 3 + 1] = (baseCol.g + (tipCol.g - baseCol.g) * g) * (1 + kb);
+      col[i * 3 + 2] = (baseCol.b + (tipCol.b - baseCol.b) * g) * (1 + kb);
+    }
+    tube.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    orientAt(tube, { x: px, y: py, z: pz }, dir);
+    geos.push(tube);
+    if (term) return;
+    const kids = depth === 0 ? 3 : 2 + (rand() < 0.65 ? 1 : 0);
     for (let c = 0; c < kids; c++) {
-      const ax = new THREE.Vector3(rand() - 0.5, rand() * 0.3, rand() - 0.5).normalize();
-      const nd = dir.clone().applyAxisAngle(ax, 0.4 + rand() * 0.55).normalize();
-      if (nd.y < 0.12) nd.y = 0.12 + rand() * 0.2;
-      nd.normalize();
-      branch(jx, jy, jz, nd, len * (0.66 + rand() * 0.14), rad * 0.62, depth + 1);
+      const cont = c === 0;
+      const kAt = cont ? 1 : 0.55 + rand() * 0.35;
+      const [ox, oz] = wob(kAt);
+      _v.set(ox, kAt * len, oz)
+        .applyQuaternion(_q.setFromUnitVectors(_UP, dir));
+      const ax = new THREE.Vector3(rand() - 0.5, rand() * 0.4, rand() - 0.5).normalize();
+      const nd = dir.clone()
+        .applyAxisAngle(ax, cont ? 0.15 + rand() * 0.3 : 0.35 + rand() * 0.4)
+        .normalize();
+      if (nd.y < 0.28) { nd.y = 0.28 + rand() * 0.25; nd.normalize(); }
+      // child base radius ~ parent radius at the attach point, so joints
+      // flow instead of bulging
+      const parentR = rad * (1 - 0.48 * kAt);
+      branch(px + _v.x, py + _v.y, pz + _v.z, nd,
+        len * (cont ? 0.78 : 0.62) * (0.9 + rand() * 0.2),
+        parentR * (cont ? 0.92 : 0.78), depth + 1);
     }
   }
   for (let tr = 0; tr < 3; tr++) {
-    const a = rand() * Math.PI * 2;
-    const dir = new THREE.Vector3(Math.cos(a) * 0.4, 1, Math.sin(a) * 0.4).normalize();
-    branch(Math.cos(a) * 0.05, 0, Math.sin(a) * 0.05, dir, 0.3 + rand() * 0.12, 0.034, 0);
+    const a = (tr / 3) * Math.PI * 2 + rand() * 1.2;
+    const dir = new THREE.Vector3(
+      Math.cos(a) * (0.3 + rand() * 0.25), 1, Math.sin(a) * (0.3 + rand() * 0.25)).normalize();
+    branch(Math.cos(a) * 0.06, 0, Math.sin(a) * 0.06, dir, 0.33 + rand() * 0.12, 0.036, 0);
   }
   return mergeGeometries(geos);
 }
 
-// table coral: a stubby stem under a wide, bumpy, wobble-edged plate
+// table coral: a wide wobble-edged acropora plate on a fused-column stem.
+// The plate is a polar grid (so its interior really undulates), bristling
+// with hundreds of tiny upward branchlets whose tips bleach cream; the
+// underside hangs radial ribs and stays in shadow-brown.
 function tableGeo(seed) {
   const rand = mulberry32(seed);
   const noise = new Simplex2(seed);
-  const shape = new THREE.Shape();
+  const geos = [];
+  const ph1 = rand() * 9, ph2 = rand() * 7;
   const R = 0.5;
-  for (let i = 0; i <= 40; i++) {
-    const a = (i / 40) * Math.PI * 2;
-    const r = R * (0.82 + 0.18 * Math.sin(a * 3 + rand() * 9) * Math.sin(a * 5 + rand() * 7));
-    const x = Math.cos(a) * r, y = Math.sin(a) * r;
-    if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+  const outline = (a) => R * (0.82 + 0.18 * Math.sin(a * 3 + ph1) * Math.sin(a * 5 + ph2));
+  const topBase = 0.30;
+  const topY = (x, z) =>
+    topBase + noise.fbm(x * 4.2, z * 4.2, 3) * 0.05
+    + noise.fbm(x * 11, z * 11, 2) * 0.012;
+
+  const paintDisc = (geo, colFn) => {
+    const p = geo.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const th = Math.atan2(z, x);
+      const u = Math.min(Math.hypot(x, z) / outline(th), 1);
+      const [r, g, b] = colFn(x, z, u, th);
+      col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return geo;
+  };
+
+  // top surface: khaki-olive, mottled, with a pale live-growth rim
+  const top = paintDisc(
+    discGrid(10, 72, (u, th, out) => {
+      const r = outline(th) * u;
+      const x = Math.cos(th) * r, z = Math.sin(th) * r;
+      out.set(x, topY(x, z), z);
+    }, true),
+    (x, z, u) => {
+      const m = noise.fbm(x * 6 + 3, z * 6, 2);
+      const sp = 1 + noise.fbm(x * 34, z * 34, 2) * 0.35; // corallite stipple
+      let r = (0.36 + m * 0.13) * sp, g = (0.31 + m * 0.11) * sp, b = (0.15 + m * 0.06) * sp;
+      const rim = sm((u - 0.86) / 0.14);
+      return [lerp(r, 0.88, rim), lerp(g, 0.80, rim), lerp(b, 0.55, rim)];
+    });
+  geos.push(top);
+
+  // underside: shadowed brown, ribbed radially, tucked in under the rim so
+  // the two surfaces never sit coplanar and catch shadow acne
+  const bot = paintDisc(
+    discGrid(6, 72, (u, th, out) => {
+      const r = outline(th) * u * 0.985;
+      const x = Math.cos(th) * r, z = Math.sin(th) * r;
+      const seal = 1 - sm((u - 0.82) / 0.18);
+      const thick = 0.10 * Math.pow(1 - u, 1.3) + 0.010 * seal + 0.004;
+      out.set(x, topY(x, z) - thick + Math.sin(th * 24) * 0.005 * u * seal, z);
+    }, false),
+    (x, z, u, th) => {
+      const rib = 0.85 + 0.15 * Math.sin(th * 24);
+      return [0.30 * rib, 0.235 * rib, 0.165 * rib];
+    });
+  geos.push(bot);
+
+  // branchlet nubs all over the top, denser than they look from shore
+  for (let i = 0; i < 230; i++) {
+    const th = rand() * Math.PI * 2;
+    const u = Math.sqrt(rand()) * 0.96;
+    const r = outline(th) * u;
+    const x = Math.cos(th) * r, z = Math.sin(th) * r;
+    const h = 0.02 + rand() * 0.035;
+    const r0 = 0.008 + rand() * 0.006;
+    const nub = bentCone(h, 5, 1, (k) => r0 * (1 - 0.8 * k), null, true);
+    const p = nub.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let vi = 0; vi < p.count; vi++) {
+      const k = Math.min(Math.max(p.getY(vi) / h, 0), 1);
+      col[vi * 3] = lerp(0.34, 0.92, k);
+      col[vi * 3 + 1] = lerp(0.29, 0.83, k);
+      col[vi * 3 + 2] = lerp(0.13, 0.55, k);
+    }
+    nub.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const tx = (rand() - 0.5) * 0.5, tz = (rand() - 0.5) * 0.5;
+    orientAt(nub, { x, y: topY(x, z) - 0.004, z },
+      _v3.set(tx, 1, tz).normalize());
+    geos.push(nub);
   }
-  const plate = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.055, bevelEnabled: false, curveSegments: 4,
-  });
-  plate.rotateX(-Math.PI / 2); // slab lies flat, top at y ≈ 0.055
-  plate.translate(0, 0.26, 0);
-  const p = plate.attributes.position;
+
+  // stem: a fused cluster of columns rather than one clean cylinder
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + rand();
+    const off = i === 0 ? 0 : 0.05 + rand() * 0.03;
+    const ph = rand() * 6;
+    const stem = bentCone(i === 0 ? topBase + 0.02 : 0.16 + rand() * 0.08, 8, 3,
+      (k) => (i === 0 ? 0.075 : 0.042) * (1 + 0.5 * Math.pow(1 - k, 1.6))
+        * (1 + 0.10 * Math.sin(k * 9 + ph)),
+      (k) => [Math.sin(ph) * 0.02 * k, Math.cos(ph) * 0.02 * k]);
+    constColor(stem, 0.26, 0.20, 0.14);
+    orientAt(stem, { x: Math.cos(a) * off, y: 0, z: Math.sin(a) * off },
+      i === 0 ? _UP : _v3.set(-Math.cos(a) * 0.25, 1, -Math.sin(a) * 0.25).normalize());
+    geos.push(stem);
+  }
+  return mergeGeometries(geos);
+}
+
+// gorgonian sea fan: a painted lace of branching veins that reconnect the
+// way real gorgonian meshes anastomose, drawn twice — once in color, once
+// as a height field that becomes the normal map so every vein has relief
+function fanTextures() {
+  const W = 512, H = 448;
+  const rand = mulberry32(913);
+  const c1 = document.createElement('canvas'); c1.width = W; c1.height = H;
+  const ctx = c1.getContext('2d');
+  const c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
+  const hx = c2.getContext('2d', { willReadFrequently: true });
+  ctx.clearRect(0, 0, W, H);
+  hx.fillStyle = '#000';
+  hx.fillRect(0, 0, W, H);
+  for (const g of [ctx, hx]) { g.lineCap = 'round'; g.lineJoin = 'round'; }
+
+  const pts = [];
+  function seg(x0, y0, x1, y1, w, bright, alpha) {
+    const v = Math.round(150 + bright * 100);
+    ctx.strokeStyle = `rgba(${Math.min(v + 12, 255)}, ${Math.min(v + 4, 255)}, ${v}, ${alpha})`;
+    ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    hx.strokeStyle = `rgba(255,255,255,${0.3 + Math.min(w / 9, 0.65)})`;
+    hx.lineWidth = w;
+    hx.beginPath(); hx.moveTo(x0, y0); hx.lineTo(x1, y1); hx.stroke();
+  }
+  function vein(x, y, ang, w, depth, bright) {
+    if (depth > 8 || y < 8 || x < 6 || x > W - 6) return;
+    if (depth > 3 && rand() < 0.12) return; // ragged gaps in the lace
+    const len = (26 - depth * 2.2) * (0.8 + rand() * 0.5);
+    const nx = x + Math.sin(ang) * len;
+    const ny = y - Math.cos(ang) * len * 0.94;
+    seg(x, y, nx, ny, w, bright, 0.97);
+    if (depth > 2) pts.push(nx, ny);
+    const n = depth < 2 ? 3 : (rand() < 0.14 ? 3 : 2);
+    for (let i = 0; i < n; i++) {
+      vein(nx, ny, ang + (rand() - 0.5) * 0.85, Math.max(w * 0.74, 0.65), depth + 1,
+        Math.min(bright * (0.95 + rand() * 0.12), 1));
+    }
+  }
+  // the dark holdfast trunk, short and low, then primaries spreading wide
+  // from just above it so the skeleton reads fan, not tree
+  seg(W / 2, H - 2, W / 2 + 2, H - 22, 13, 0.1, 1);
+  for (let i = -3; i <= 3; i++) {
+    vein(W / 2, H - 20, i * 0.30 + (rand() - 0.5) * 0.07, 5.5, 0, 0.85);
+  }
+  // two low laterals sweeping almost horizontal, filling the fan's shoulders
+  // (started at depth 1 so the ragged-gap pruning can't kill them young)
+  vein(W / 2, H - 24, -1.1, 3.5, 1, 0.8);
+  vein(W / 2, H - 24, 1.1, 3.5, 1, 0.8);
+  // anastomosis: thin cross-links between nearby vein tips knit the lace
+  const P = pts.length / 2;
+  for (let i = 0; i < 2400; i++) {
+    const a = Math.floor(rand() * P), b = Math.floor(rand() * P);
+    const ax = pts[a * 2], ay = pts[a * 2 + 1];
+    const bx = pts[b * 2], by = pts[b * 2 + 1];
+    const d = Math.hypot(ax - bx, ay - by);
+    if (d < 4 || d > 24) continue;
+    seg(ax, ay, bx, by, 1.0, 0.72 + rand() * 0.2, 0.45);
+  }
+
+  const img = hx.getImageData(0, 0, W, H).data;
+  const field = new Float32Array(W * H);
+  for (let i = 0; i < field.length; i++) field[i] = img[i * 4] / 255;
+  const map = new THREE.CanvasTexture(c1);
+  map.colorSpace = THREE.SRGBColorSpace;
+  return { map, normalMap: heightNormalTex(field, W, H, 2.4) };
+}
+
+// the blade itself: cupped, ruffled, never a flat rectangle — plus a real
+// little stem whose UVs sit on the solid patch of the lace texture
+function fanGeo() {
+  const g = new THREE.PlaneGeometry(1.3, 1.1, 20, 16);
+  g.translate(0, 0.55, 0);
+  const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    if (y > 0.30) p.setY(i, y + noise.fbm(x * 6, z * 6, 2) * 0.035);
+    const x = p.getX(i), y = p.getY(i);
+    const ky = y / 1.1;
+    let z = -(x * x) * 0.22 - Math.pow(Math.max(ky - 0.15, 0), 2) * 0.10;
+    z += Math.sin(x * 7.5 + ky * 4) * 0.03 * ky + Math.sin(x * 15 - ky * 9) * 0.012 * ky;
+    p.setZ(i, z * sm(ky * 2.5));
   }
-  plate.computeVertexNormals();
-  // top face khaki-green, underside and stem shadowed brown
-  const n = p.count;
-  const col = new Float32Array(n * 3);
-  const nrm = plate.attributes.normal;
-  for (let i = 0; i < n; i++) {
-    if (nrm.getY(i) > 0.45) { col[i * 3] = 0.66; col[i * 3 + 1] = 0.62; col[i * 3 + 2] = 0.42; }
-    else { col[i * 3] = 0.34; col[i * 3 + 1] = 0.26; col[i * 3 + 2] = 0.18; }
-  }
-  plate.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  // the extruded plate is non-indexed; the stem must match or the merge nulls
-  const stem = new THREE.CylinderGeometry(0.07, 0.11, 0.3, 8).toNonIndexed();
-  stem.translate(0, 0.15, 0);
-  constColor(stem, 0.34, 0.26, 0.18);
-  return mergeGeometries([plate, stem]);
+  g.computeVertexNormals();
+  const stem = bentCone(0.13, 6, 2, (k) => 0.035 * (1 - 0.5 * k), (k) => [0.01 * k * k, 0]);
+  // park the stem UVs on the painted trunk, which is solid dark there
+  const uv = stem.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, 0.5, 0.02);
+  return mergeGeometries([g, stem]);
 }
 
-// gorgonian sea fan: a painted lace of branching veins on a swaying plane
-function fanTexture() {
-  return canvasTex(256, 224, (ctx) => {
-    const rand = mulberry32(913);
-    ctx.clearRect(0, 0, 256, 224);
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(238, 232, 244, 0.96)';
-    function vein(x, y, ang, w, depth) {
-      if (depth > 7 || y < 6) return;
-      const len = 14 + rand() * 16;
-      const nx = x + Math.sin(ang) * len;
-      const ny = y - Math.cos(ang) * len * 0.9;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(nx, ny);
-      ctx.stroke();
-      const n = depth < 2 ? 3 : 2;
-      for (let i = 0; i < n; i++) {
-        vein(nx, ny, ang + (rand() - 0.5) * 0.9, Math.max(w * 0.72, 0.7), depth + 1);
-      }
-    }
-    for (let i = -2; i <= 2; i++) vein(128, 220, i * 0.30, 5, 0);
-    // fine mesh connecting the lace so it reads solid from a distance
-    ctx.strokeStyle = 'rgba(238, 232, 244, 0.30)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 340; i++) {
-      const x = rand() * 256, y = rand() * 200;
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + (rand() - 0.5) * 16, y + (rand() - 0.5) * 16);
-      ctx.stroke();
-    }
-  });
-}
-
-// tube sponge: a leaning cluster of open-mouthed tubes
+// tube sponge: a leaning cluster of open-mouthed tubes. The profile now
+// rolls over the lip and down inside, so each tube has a real dark throat;
+// the outside gets lumpy, rib-streaked fibrous displacement per tube.
 function spongeGeo(seed) {
   const rand = mulberry32(seed);
-  const pts = [];
-  for (const [r, y] of [[0.055, 0], [0.075, 0.06], [0.062, 0.2], [0.058, 0.34], [0.07, 0.44], [0.052, 0.47]]) {
-    pts.push(new THREE.Vector2(r, y));
-  }
+  const noise = new Simplex2(seed);
+  const prof = [
+    [0.055, 0], [0.085, 0.045], [0.078, 0.14], [0.066, 0.26], [0.063, 0.36],
+    [0.075, 0.44], [0.072, 0.475],           // up the outside to the lip
+    [0.052, 0.482], [0.044, 0.45],           // roll over and inside
+    [0.038, 0.37], [0.030, 0.31], [0.003, 0.295], // throat and floor
+  ];
   const geos = [];
   const n = 3 + Math.floor(rand() * 3);
   for (let i = 0; i < n; i++) {
-    const tube = new THREE.LatheGeometry(pts, 10);
+    const pts = prof.map(([r, y]) => new THREE.Vector2(r, y));
+    const tube = new THREE.LatheGeometry(pts, 18);
+    const ph = rand() * 40;
+    const ribs = 7 + Math.floor(rand() * 4);
+    const p = tube.attributes.position;
+    for (let vi = 0; vi < p.count; vi++) {
+      const x = p.getX(vi), y = p.getY(vi), z = p.getZ(vi);
+      const rr = Math.hypot(x, z);
+      const outer = sm((rr - 0.032) / 0.03); // leave the throat smooth
+      const ca = rr > 1e-5 ? x / rr : 1, sa = rr > 1e-5 ? z / rr : 0;
+      const lump = noise.fbm(ca * 2.2 + ph, sa * 2.2 + y * 4.5, 3) * 0.20
+        + 0.055 * Math.sin(Math.atan2(z, x) * ribs + y * 2.5 + ph);
+      const sc = 1 + outer * lump;
+      p.setXYZ(vi, x * sc, y * (1 + outer * lump * 0.25), z * sc);
+    }
+    tube.computeVertexNormals();
     const s = 0.6 + rand() * 0.8;
     tube.scale(s, s * (0.8 + rand() * 0.6), s);
     const a = rand() * Math.PI * 2;
@@ -257,204 +588,466 @@ function spongeGeo(seed) {
   return mergeGeometries(geos);
 }
 
-function spongeTexture() {
-  return canvasTex(128, 128, (ctx) => {
-    const rand = mulberry32(577);
-    ctx.fillStyle = '#cabfd8'; // near-white violet; instance color tints it
-    ctx.fillRect(0, 0, 128, 128);
-    for (let i = 0; i < 900; i++) {
-      const a = 0.12 + rand() * 0.3;
-      ctx.fillStyle = rand() < 0.5 ? `rgba(60,44,80,${a})` : `rgba(255,250,255,${a * 0.7})`;
-      ctx.fillRect(rand() * 128, rand() * 128, 1.5, 2.5);
+// near-white violet fibre + pores (instance color paints the species); the
+// same marks drawn into a height field give the skin its pitted relief
+function spongeTextures() {
+  const S = 256;
+  const rand = mulberry32(577);
+  const c1 = document.createElement('canvas'); c1.width = S; c1.height = S;
+  const ctx = c1.getContext('2d');
+  const field = new Float32Array(S * S).fill(0.5);
+  const stamp = (x, y, r, d) => {
+    const ri = Math.ceil(r);
+    for (let dy = -ri; dy <= ri; dy++) {
+      for (let dx = -ri; dx <= ri; dx++) {
+        const q = Math.hypot(dx, dy) / r;
+        if (q > 1) continue;
+        const xi = (Math.round(x) + dx + S) % S, yi = (Math.round(y) + dy + S) % S;
+        field[yi * S + xi] += d * (1 - q * q);
+      }
     }
-    // the dark mouth of the tube (lathe v≈1 at the lip)
-    const g = ctx.createLinearGradient(0, 118, 0, 128);
-    g.addColorStop(0, 'rgba(20,12,28,0)');
-    g.addColorStop(1, 'rgba(12,8,18,0.95)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 118, 128, 10);
-  });
+  };
+  ctx.fillStyle = '#cabfd8';
+  ctx.fillRect(0, 0, S, S);
+  // vertical fibrous streaks
+  for (let i = 0; i < 130; i++) {
+    let x = rand() * S;
+    const dark = rand() < 0.55;
+    ctx.strokeStyle = dark ? 'rgba(74,58,96,0.16)' : 'rgba(255,250,255,0.14)';
+    ctx.lineWidth = 1 + rand() * 2;
+    ctx.beginPath();
+    ctx.moveTo(x, -4);
+    for (let y = 0; y < S + 8; y += 14) {
+      x += (rand() - 0.5) * 7;
+      ctx.lineTo(x, y);
+      if (!dark) stamp(x, y, 2.2, 0.10);
+    }
+    ctx.stroke();
+  }
+  // pores: little dark pits with a bright upper rim
+  for (let i = 0; i < 380; i++) {
+    const x = rand() * S, y = S * (0.42 + rand() * 0.58); // outside skin only
+    const r = 1 + rand() * 2.4;
+    ctx.fillStyle = 'rgba(52,40,70,0.55)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,252,255,0.30)';
+    ctx.beginPath(); ctx.arc(x, y - r * 0.7, r * 0.5, 0, Math.PI * 2); ctx.fill();
+    stamp(x, y, r * 1.6, -0.5);
+  }
+  // the throat: dark from the lip down (lathe v>0.62 is over the rim)
+  const g = ctx.createLinearGradient(0, S * 0.38, 0, 0);
+  g.addColorStop(0, 'rgba(20,12,28,0)');
+  g.addColorStop(0.35, 'rgba(16,10,24,0.9)');
+  g.addColorStop(1, 'rgba(10,6,16,0.98)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S * 0.38);
+  const map = new THREE.CanvasTexture(c1);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  const normalMap = heightNormalTex(field, S, S, 2.6);
+  return { map, normalMap };
 }
 
-// anemone: a mauve cushion crowded with bright-tipped tentacles
+// anemone: a fleshy striped column under an oral disc crowded with rings of
+// drooping, bubble-tipped tentacles — outer rings long and splayed, inner
+// rings short and upright, every one swept along its own curling spine
 function anemoneGeo(seed) {
   const rand = mulberry32(seed);
   const geos = [];
-  const dome = new THREE.SphereGeometry(0.16, 16, 9, 0, Math.PI * 2, 0, Math.PI / 2);
-  dome.scale(1, 0.5, 1);
-  constColor(dome, 0.55, 0.32, 0.42);
-  geos.push(dome);
-  const N = 46;
-  for (let i = 0; i < N; i++) {
-    const a = rand() * Math.PI * 2;
-    const rr = Math.sqrt(rand()) * 0.13;
-    const len = 0.14 + rand() * 0.12;
-    const t = new THREE.CylinderGeometry(0.004, 0.012, len, 5, 3);
-    // per-vertex gradient: dusky base to glowing tip
-    const p = t.attributes.position;
+
+  // the column: a fleshy dome-sided barrel, softly lumpy, vertically striped
+  const noiseC = new Simplex2((seed ^ 0x2b11) >>> 0);
+  const colProf = [
+    [0.001, 0.0], [0.135, 0.006], [0.122, 0.045], [0.104, 0.09],
+    [0.098, 0.125], [0.088, 0.152], [0.078, 0.164],
+  ];
+  const column = new THREE.LatheGeometry(
+    colProf.map(([r, y]) => new THREE.Vector2(r, y)), 24);
+  {
+    const p = column.attributes.position;
     const col = new Float32Array(p.count * 3);
-    for (let vi = 0; vi < p.count; vi++) {
-      const k = THREE.MathUtils.clamp(p.getY(vi) / len + 0.5, 0, 1);
-      col[vi * 3] = 0.5 + 0.5 * k;
-      col[vi * 3 + 1] = 0.36 + 0.58 * k;
-      col[vi * 3 + 2] = 0.5 + 0.5 * k;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const a = Math.atan2(z, x);
+      const k = Math.min(p.getY(i) / 0.164, 1);
+      // gentle fleshy lumps so the flank never reads as a lathe
+      const lump = 1 + noiseC.fbm(Math.cos(a) * 1.8, Math.sin(a) * 1.8 + k * 2.2, 2) * 0.10;
+      p.setXYZ(i, x * lump, p.getY(i), z * lump);
+      const stripe = 0.86 + 0.16 * Math.sin(a * 22) * sm(k * 3);
+      const warty = 0.95 + 0.08 * Math.sin(a * 41 + k * 28);
+      col[i * 3] = lerp(0.40, 0.58, k) * stripe * warty;
+      col[i * 3 + 1] = lerp(0.19, 0.30, k) * stripe * warty;
+      col[i * 3 + 2] = lerp(0.26, 0.42, k) * stripe * warty;
     }
-    t.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    const out = new THREE.Vector3(Math.cos(a) * rr * 4, 1, Math.sin(a) * rr * 4).normalize();
-    t.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), out));
-    t.translate(Math.cos(a) * rr, 0.07 + len * 0.4, Math.sin(a) * rr);
-    geos.push(t);
+    column.computeVertexNormals();
+    column.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geos.push(column);
+  }
+
+  // the oral disc, slightly domed, mouth dark at the centre
+  const disc = discGrid(4, 22, (u, th, out) => {
+    out.set(Math.cos(th) * 0.08 * u, 0.164 + (1 - u * u) * 0.007, Math.sin(th) * 0.08 * u);
+  }, true);
+  {
+    const p = disc.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const u = Math.hypot(x, z) / 0.088;
+      const th = Math.atan2(z, x);
+      const mouth = sm((0.25 - u) / 0.25);
+      const streak = 1 + 0.08 * Math.sin(th * 22);
+      col[i * 3] = lerp(0.64, 0.26, mouth) * streak;
+      col[i * 3 + 1] = lerp(0.42, 0.13, mouth) * streak;
+      col[i * 3 + 2] = lerp(0.50, 0.19, mouth) * streak;
+    }
+    disc.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geos.push(disc);
+  }
+
+  // tentacles, ring by ring: [ring radius, count, length, droop]
+  const RINGS = [
+    [0.100, 30, 0.17, 0.55],
+    [0.083, 24, 0.15, 0.42],
+    [0.066, 19, 0.13, 0.28],
+    [0.048, 13, 0.11, 0.15],
+    [0.028, 8, 0.085, 0.05],
+  ];
+  const K = 8;
+  for (const [ringR, count, L0, droop0] of RINGS) {
+    for (let i = 0; i < count; i++) {
+      const aa = ((i + rand() * 0.6) / count) * Math.PI * 2;
+      const L = L0 * (0.7 + rand() * 0.6);
+      const droop = droop0 * (0.4 + rand() * 1.2); // upright and lolling mixed
+      const bx = Math.cos(aa) * ringR * 0.92, bz = Math.sin(aa) * ringR * 0.92;
+      const by = 0.164 - Math.pow(ringR / 0.115, 2) * 0.018;
+      const outx = Math.cos(aa), outz = Math.sin(aa);
+      const px = -outz, pz = outx; // sideways, for the wiggle
+      const ph = rand() * 6;
+      const wig = 0.03 + rand() * 0.04;
+      const r0 = 0.0075 * (0.85 + rand() * 0.3);
+      const spread = 0.22 + droop * 0.5;
+      const din = 1 / Math.hypot(spread, 1);
+      const cents = [], radii = [], cols = [];
+      for (let j = 0; j <= K; j++) {
+        const k = j / K;
+        const arc = droop * k * k * 0.7;
+        // an S-bend plus sideways sway keeps every tentacle its own curve
+        const wob = Math.sin(k * 4.5 + ph) * wig * k;
+        const sway = Math.sin(k * 2.2 + ph * 1.7) * wig * 0.7;
+        cents.push(new THREE.Vector3(
+          bx + (outx * (spread * din * k + arc + sway) + px * wob) * L,
+          by + (din * k - droop * 0.55 * k * k * k) * L,
+          bz + (outz * (spread * din * k + arc + sway) + pz * wob) * L));
+        const bulb = Math.exp(-Math.pow((k - 0.82) / 0.13, 2));
+        radii.push(j === K ? r0 * 0.45 : r0 * (1 - 0.38 * k) * (1 + 0.55 * bulb));
+        const t1 = sm(k / 0.6), t2 = sm((k - 0.6) / 0.3);
+        cols.push([
+          lerp(lerp(0.48, 0.70, t1), 1.0, t2),
+          lerp(lerp(0.24, 0.46, t1), 0.96, t2),
+          lerp(lerp(0.36, 0.60, t1), 1.0, t2),
+        ]);
+      }
+      geos.push(sweepTube(cents, radii, cols, 7));
+    }
   }
   return mergeGeometries(geos);
 }
 
-// urchin: a dark little mine of needles
+// urchin: a squat test wearing rows of pale tubercles, under a double coat
+// of spines — long banded primaries that curve a little, and a fuzz of
+// short dark secondaries filling the gaps between them
 function urchinGeo(seed) {
   const rand = mulberry32(seed);
   const geos = [];
-  const body = new THREE.SphereGeometry(0.045, 10, 8);
-  constColor(body, 0.09, 0.05, 0.12);
-  geos.push(body);
-  for (let i = 0; i < 60; i++) {
-    const dir = new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize();
-    if (dir.y < -0.35) dir.y = -0.35;
-    const len = 0.07 + rand() * 0.08;
-    const sp = new THREE.CylinderGeometry(0.0012, 0.0042, len, 4, 1);
+  const body = new THREE.SphereGeometry(0.054, 22, 16);
+  body.scale(1, 0.82, 1);
+  body.translate(0, 0.006, 0);
+  {
+    const p = body.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const a = Math.atan2(p.getZ(i), p.getX(i));
+      const band = Math.pow(Math.abs(Math.sin(a * 5 + 0.4)), 6);
+      const dot = Math.pow(Math.abs(Math.sin(p.getY(i) * 260)), 8) * band;
+      col[i * 3] = 0.075 + band * 0.06 + dot * 0.22;
+      col[i * 3 + 1] = 0.045 + band * 0.03 + dot * 0.14;
+      col[i * 3 + 2] = 0.10 + band * 0.08 + dot * 0.26;
+    }
+    body.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geos.push(body);
+  }
+  const dir = new THREE.Vector3();
+  for (let i = 0; i < 70; i++) {
+    dir.set(rand() - 0.5, rand() - 0.38, rand() - 0.5).normalize();
+    if (dir.y < -0.12) { dir.y = -0.12 + rand() * 0.1; dir.normalize(); }
+    const len = 0.08 + rand() * 0.09;
+    const ph = rand() * 6;
+    const bx = (rand() - 0.5) * len * 0.25, bz = (rand() - 0.5) * len * 0.25;
+    const sp = bentCone(len, 5, 3,
+      (k) => 0.0050 * (1 - 0.85 * k) + 0.0004,
+      (k) => [bx * k * k, bz * k * k], true);
     const p = sp.attributes.position;
     const col = new Float32Array(p.count * 3);
     for (let vi = 0; vi < p.count; vi++) {
-      const k = THREE.MathUtils.clamp(p.getY(vi) / len + 0.5, 0, 1);
-      col[vi * 3] = 0.1 + 0.25 * k;
-      col[vi * 3 + 1] = 0.05 + 0.1 * k;
-      col[vi * 3 + 2] = 0.14 + 0.3 * k;
+      const k = Math.min(Math.max(p.getY(vi) / len, 0), 1);
+      const band = 0.75 + 0.25 * Math.sin(k * 22 + ph);
+      col[vi * 3] = lerp(0.10, 0.46, k * k) * band + k * 0.06;
+      col[vi * 3 + 1] = lerp(0.06, 0.30, k * k) * band + k * 0.04;
+      col[vi * 3 + 2] = lerp(0.14, 0.52, k * k) * band + k * 0.07;
     }
     sp.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    sp.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
-    sp.translate(dir.x * (0.04 + len * 0.4), dir.y * (0.04 + len * 0.4), dir.z * (0.04 + len * 0.4));
+    const base = 0.045;
+    orientAt(sp, { x: dir.x * base, y: dir.y * base * 0.82 + 0.006, z: dir.z * base }, dir);
+    geos.push(sp);
+  }
+  // the short secondary fuzz
+  for (let i = 0; i < 85; i++) {
+    dir.set(rand() - 0.5, rand() - 0.38, rand() - 0.5).normalize();
+    if (dir.y < -0.1) { dir.y = -0.1 + rand() * 0.1; dir.normalize(); }
+    const len = 0.022 + rand() * 0.022;
+    const sp = bentCone(len, 4, 1, (k) => 0.0024 * (1 - 0.8 * k), null, true);
+    constColor(sp, 0.16, 0.08, 0.11);
+    const base = 0.050;
+    orientAt(sp, { x: dir.x * base, y: dir.y * base * 0.82 + 0.006, z: dir.z * base }, dir);
     geos.push(sp);
   }
   return mergeGeometries(geos);
 }
 
-// starfish: five plump arms, knobbed down the midlines
+// starfish: five plump domed arms built on a polar grid so the surface has
+// real interior vertices — rows of ossicle knobs march down each arm as
+// geometry, tips curl gently upward, valleys shade darker between knobs.
+// Near-white vertex colors; the instance tint paints the species.
 function starGeo() {
-  const shape = new THREE.Shape();
-  const N = 90;
-  for (let i = 0; i <= N; i++) {
-    const a = (i / N) * Math.PI * 2;
-    const lobe = Math.pow(Math.abs(Math.cos(a * 2.5)), 0.72);
-    const r = 0.045 + 0.115 * lobe;
-    const x = Math.cos(a) * r, y = Math.sin(a) * r;
-    if (i === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
-  }
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.02, bevelEnabled: true, bevelThickness: 0.012, bevelSize: 0.012, bevelSegments: 2,
-    curveSegments: 4,
-  });
-  geo.rotateX(-Math.PI / 2);
-  // dome the middle up a little
-  const p = geo.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), z = p.getZ(i);
-    const d = Math.hypot(x, z);
-    p.setY(i, p.getY(i) + Math.max(0, 1 - d / 0.16) * 0.022);
-  }
-  geo.computeVertexNormals();
-  return geo;
-}
-
-function starTexture() {
-  return canvasTex(128, 128, (ctx) => {
-    const rand = mulberry32(311);
-    ctx.fillStyle = '#e8e2da'; // near-white; instance color paints the species
-    ctx.fillRect(0, 0, 128, 128);
-    // knobby ossicles marching out along each arm
+  const noise = new Simplex2(9182);
+  const lobe = (a) => Math.pow(Math.abs(Math.cos(a * 2.5)), 0.85);
+  const shapeR = (a) => 0.048 + 0.118 * lobe(a);
+  // knob field: a centre row and two flanks of ossicles down each arm axis
+  function knob(x, z) {
+    let g = 0;
     for (let arm = 0; arm < 5; arm++) {
-      const a = (arm / 5) * Math.PI * 2 + Math.PI / 2;
-      for (let s = 0; s < 9; s++) {
-        const r = 8 + s * 6;
-        const x = 64 + Math.cos(a) * r, y = 64 + Math.sin(a) * r;
-        ctx.fillStyle = `rgba(90, 70, 60, ${0.5 - s * 0.04})`;
-        ctx.beginPath();
-        ctx.arc(x + (rand() - 0.5) * 3, y + (rand() - 0.5) * 3, 2.6 - s * 0.14, 0, Math.PI * 2);
-        ctx.fill();
+      const aa = arm * (Math.PI * 2 / 5);
+      const ca = Math.cos(aa), sa = Math.sin(aa);
+      const along = x * ca + z * sa;
+      if (along < 0.012) continue;
+      const across = -x * sa + z * ca;
+      for (const [off, w, amp] of [[0, 0.011, 1], [0.019, 0.008, 0.65], [-0.019, 0.008, 0.65]]) {
+        const lat = Math.exp(-Math.pow((across - off) / w, 2));
+        const rip = 0.5 + 0.5 * Math.cos((along / 0.019) * Math.PI * 2 + arm * 1.7);
+        g = Math.max(g, lat * rip * amp * sm((along - 0.014) / 0.02));
       }
     }
-    for (let i = 0; i < 260; i++) {
-      ctx.fillStyle = `rgba(120, 96, 82, ${0.1 + rand() * 0.2})`;
-      ctx.fillRect(rand() * 128, rand() * 128, 1.5, 1.5);
+    g += Math.max(noise.fbm(x * 52, z * 52, 2), 0) * 0.55; // scattered granules
+    return Math.min(g, 1.15);
+  }
+  const curl = (u, th) => 0.016 * sm((u - 0.78) / 0.22) * lobe(th);
+  const top = discGrid(14, 110, (u, th, out) => {
+    const R = shapeR(th);
+    const x = Math.cos(th) * R * u, z = Math.sin(th) * R * u;
+    let y = 0.060 * Math.pow(Math.max(1 - u * u, 0), 0.72) + 0.004;
+    y += knob(x, z) * 0.013 * sm((0.97 - u) / 0.15);
+    out.set(x, y + curl(u, th), z);
+  }, true);
+  {
+    const p = top.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), z = p.getZ(i);
+      const k = Math.min(knob(x, z), 1);
+      const u = Math.min(Math.hypot(x, z) / shapeR(Math.atan2(z, x)), 1);
+      const edge = 1 - sm((u - 0.82) / 0.18) * 0.15;
+      col[i * 3] = 0.96 * (0.58 + 0.47 * k) * edge;
+      col[i * 3 + 1] = 0.90 * (0.56 + 0.48 * k) * edge;
+      col[i * 3 + 2] = 0.83 * (0.55 + 0.46 * k) * edge;
     }
-  });
+    top.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  }
+  const bot = discGrid(5, 110, (u, th, out) => {
+    const R = shapeR(th);
+    // the rim must land exactly on the top surface's edge or light leaks in
+    out.set(Math.cos(th) * R * u, 0.004 - 0.004 * (1 - u) + curl(u, th), Math.sin(th) * R * u);
+  }, false);
+  {
+    const p = bot.attributes.position;
+    const col = new Float32Array(p.count * 3);
+    for (let i = 0; i < p.count; i++) {
+      const u = Math.min(Math.hypot(p.getX(i), p.getZ(i)) / 0.16, 1);
+      const mouth = sm((0.18 - u) / 0.18);
+      // stay close to the top's edge tone so no pale stripe rings the rim
+      col[i * 3] = lerp(0.62, 0.42, mouth);
+      col[i * 3 + 1] = lerp(0.57, 0.35, mouth);
+      col[i * 3 + 2] = lerp(0.50, 0.30, mouth);
+    }
+    bot.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  }
+  return mergeGeometries([top, bot]);
 }
 
-// seagrass tuft: three curved blades
+// seagrass tuft: six ribbon blades that taper to a point, curl over at the
+// top and carry a darker midrib — a few older blades browning at the tip
 function grassGeo(seed) {
   const rand = mulberry32(seed);
   const geos = [];
-  for (let b = 0; b < 3; b++) {
-    const H = 0.34 + rand() * 0.3;
-    const blade = new THREE.PlaneGeometry(0.042, H, 1, 4);
+  for (let b = 0; b < 8; b++) {
+    const H = 0.24 + rand() * 0.42;
+    const blade = new THREE.PlaneGeometry(0.05, H, 2, 6);
     blade.translate(0, H / 2, 0);
     const p = blade.attributes.position;
     const col = new Float32Array(p.count * 3);
-    const lean = (rand() - 0.5) * 0.24;
+    const lean = (rand() - 0.5) * 0.8;
+    const curlB = (rand() - 0.5) * 0.6;
+    const ph = rand() * 6;
+    const hue = rand();
+    const old = rand() < 0.3;
     for (let i = 0; i < p.count; i++) {
-      const k = p.getY(i) / H;
-      p.setX(i, p.getX(i) + k * k * lean);
-      col[i * 3] = 0.10 + 0.22 * k;
-      col[i * 3 + 1] = 0.30 + 0.42 * k;
-      col[i * 3 + 2] = 0.10 + 0.14 * k;
+      const k = Math.max(p.getY(i) / H, 0); // float error must not go negative
+      const x0 = p.getX(i);
+      const taper = 1 - 0.82 * Math.pow(k, 1.6);
+      p.setXYZ(i,
+        x0 * taper + k * k * lean * H + k * k * k * curlB * H + Math.sin(k * 2.6 + ph) * 0.012,
+        p.getY(i),
+        Math.sin(k * 3.1 + ph) * 0.012);
+      const mid = 1 - Math.min(Math.abs(x0) / 0.025, 1); // centre column
+      let r = 0.08 + 0.28 * k + hue * 0.10;
+      let g = 0.26 + 0.44 * k + hue * 0.07;
+      let bl = 0.10 + 0.09 * k;
+      if (old && k > 0.65) {
+        const w = (k - 0.65) / 0.35 * 0.75;
+        r = lerp(r, 0.46, w); g = lerp(g, 0.40, w); bl = lerp(bl, 0.16, w);
+      }
+      const rib = 1 - mid * 0.24;
+      col[i * 3] = r * rib; col[i * 3 + 1] = g * rib; col[i * 3 + 2] = bl * rib;
     }
     blade.setAttribute('color', new THREE.BufferAttribute(col, 3));
     blade.rotateY(rand() * Math.PI * 2);
-    blade.translate((rand() - 0.5) * 0.06, 0, (rand() - 0.5) * 0.06);
+    blade.translate((rand() - 0.5) * 0.07, 0, (rand() - 0.5) * 0.07);
     geos.push(blade);
   }
   return mergeGeometries(geos);
 }
 
-// giant clam shells (built per-clam, not instanced — there are only a few)
+// giant clam shells (built per-clam, not instanced — there are only a few).
+// Deep scalloped flutes swell toward the rim (the mirrored valves interlock
+// on their own), fine growth corrugations ring the meridians, and the lip
+// itself waves up and down like real tridacna.
 function clamShellGeo() {
-  const geo = new THREE.SphereGeometry(1, 26, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+  const noise = new Simplex2(4477);
+  const geo = new THREE.SphereGeometry(1, 56, 22, 0, Math.PI * 2, 0, Math.PI / 2);
   const p = geo.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
     const a = Math.atan2(z, x);
-    const flute = 1 + 0.07 * Math.sin(a * 7);
-    p.setXYZ(i, x * flute, y * 0.45, z * flute);
+    const rim = 1 - Math.min(Math.max(y, 0), 1);
+    const flute = Math.sin(a * 6 + Math.sin(a * 2 + 1.3) * 0.7);
+    const amp = 0.15 * Math.pow(rim, 1.7) + 0.012;
+    const growth = 1 + 0.012 * Math.sin(Math.acos(Math.min(Math.max(y, 0), 1)) * 30)
+      + noise.fbm(a * 1.7, y * 3.1, 2) * 0.02;
+    const s = (1 + flute * amp) * growth;
+    const lip = y < 0.06 ? (1 - y / 0.06) * flute * 0.028 : 0;
+    p.setXYZ(i, x * s, y * 0.45 - lip, z * s);
   }
   geo.computeVertexNormals();
   return geo;
 }
 
-function clamShellTexture() {
-  return canvasTex(256, 64, (ctx) => {
-    ctx.fillStyle = '#cfc4ae';
-    ctx.fillRect(0, 0, 256, 64);
-    for (let i = 0; i < 14; i++) {
-      const x = (i / 14) * 256;
-      const g = ctx.createLinearGradient(x, 0, x + 18, 0);
-      g.addColorStop(0, 'rgba(120,104,84,0.5)');
-      g.addColorStop(0.5, 'rgba(255,250,238,0.35)');
-      g.addColorStop(1, 'rgba(120,104,84,0.0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x, 0, 18, 64);
-    }
-  });
+function clamShellTextures() {
+  const W = 512, H = 128;
+  const rand = mulberry32(4478);
+  const c1 = document.createElement('canvas'); c1.width = W; c1.height = H;
+  const ctx = c1.getContext('2d');
+  ctx.fillStyle = '#d6cbb2';
+  ctx.fillRect(0, 0, W, H);
+  // flute shading: six soft vertical bands matching the geometry frequency
+  for (let x = 0; x < W; x++) {
+    const v = Math.cos((x / W) * Math.PI * 2 * 6);
+    ctx.fillStyle = `rgba(110,94,74,${Math.max(-v, 0) * 0.24})`;
+    ctx.fillRect(x, 0, 1, H);
+    ctx.fillStyle = `rgba(255,250,240,${Math.max(v, 0) * 0.14})`;
+    ctx.fillRect(x, 0, 1, H);
+  }
+  // growth bands: dozens of fine arcs, crowding toward the rim (canvas
+  // bottom = uv v 0 = the lip), a few of them blushing pink or tan
+  const field = new Float32Array(W * H).fill(0.5);
+  let y = H - 2;
+  while (y > 4) {
+    const wgt = 0.35 + rand() * 0.65;
+    const tint = rand();
+    ctx.fillStyle = tint < 0.16 ? `rgba(196,142,124,${0.22 * wgt})`
+      : tint < 0.3 ? `rgba(170,144,96,${0.2 * wgt})`
+        : `rgba(96,82,64,${0.22 * wgt})`;
+    ctx.fillRect(0, y, W, 1.5);
+    for (let x = 0; x < W; x++) field[Math.round(y) * W + x] -= 0.22 * wgt;
+    y -= (1.5 + rand() * 5) * (0.4 + (y / H) * 0.9); // denser near the rim
+  }
+  // weathering: gray-green algal stains and bleached patches
+  for (let i = 0; i < 60; i++) {
+    const px = rand() * W, py = rand() * H;
+    const r = 4 + rand() * 16;
+    ctx.fillStyle = rand() < 0.55
+      ? `rgba(96,112,84,${0.05 + rand() * 0.12})`
+      : `rgba(244,240,228,${0.05 + rand() * 0.1})`;
+    ctx.beginPath(); ctx.ellipse(px, py, r, r * (0.4 + rand() * 0.5), rand() * 3, 0, Math.PI * 2); ctx.fill();
+  }
+  // fine radial striae in the height field
+  for (let i = 0; i < 220; i++) {
+    const x = Math.floor(rand() * W);
+    const d = (rand() - 0.5) * 0.25;
+    for (let yy = 0; yy < H; yy++) field[yy * W + x] += d;
+  }
+  const map = new THREE.CanvasTexture(c1);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return { map, normalMap: heightNormalTex(field, W, H, 2.0) };
 }
 
-function clamMantleTexture() {
-  return canvasTex(256, 64, (ctx) => {
-    const rand = mulberry32(742);
-    ctx.fillStyle = '#0d6f78';
-    ctx.fillRect(0, 0, 256, 64);
-    for (let i = 0; i < 90; i++) {
-      ctx.fillStyle = rand() < 0.6 ? '#15c4c9' : '#0a2c50';
-      ctx.beginPath();
-      ctx.arc(rand() * 256, rand() * 64, 1.5 + rand() * 4, 0, Math.PI * 2);
-      ctx.fill();
+function clamMantleTextures() {
+  const W = 512, H = 64;
+  const rand = mulberry32(742);
+  const c1 = document.createElement('canvas'); c1.width = W; c1.height = H;
+  const ctx = c1.getContext('2d');
+  const field = new Float32Array(W * H).fill(0.5);
+  ctx.fillStyle = '#0a555e';
+  ctx.fillRect(0, 0, W, H);
+  // wavy dark olive bands running along the mantle
+  for (let b = 0; b < 4; b++) {
+    ctx.strokeStyle = 'rgba(26,42,22,0.55)';
+    ctx.lineWidth = 5 + rand() * 5;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 8) {
+      const yy = H * (0.2 + b * 0.2) + Math.sin(x * 0.05 + b * 2.2) * 6;
+      if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
     }
-  });
+    ctx.stroke();
+  }
+  // electric-blue blobs ringed in near-black, the tridacna signature
+  for (let i = 0; i < 150; i++) {
+    const x = rand() * W, yy = rand() * H;
+    const r = 1.4 + rand() * 3.2;
+    ctx.fillStyle = 'rgba(6,14,20,0.85)';
+    ctx.beginPath(); ctx.arc(x, yy, r * 1.35, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = rand() < 0.75 ? '#19d9de' : '#48b5ff';
+    ctx.beginPath(); ctx.arc(x, yy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(240,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(x - r * 0.3, yy - r * 0.3, r * 0.3, 0, Math.PI * 2); ctx.fill();
+    const xi = Math.round(x), yi = Math.round(yy), ri = Math.ceil(r * 1.2);
+    for (let dy = -ri; dy <= ri; dy++) {
+      for (let dx = -ri; dx <= ri; dx++) {
+        const q = Math.hypot(dx, dy) / (r * 1.2);
+        if (q > 1) continue;
+        field[((yi + dy + H) % H) * W + ((xi + dx + W) % W)] += 0.35 * (1 - q * q);
+      }
+    }
+  }
+  // iridocyte glitter
+  for (let i = 0; i < 500; i++) {
+    ctx.fillStyle = `rgba(${140 + rand() * 100},${220 + rand() * 35},${230 + rand() * 25},${0.12 + rand() * 0.22})`;
+    ctx.fillRect(rand() * W, rand() * H, 1.5, 1.5);
+  }
+  const map = new THREE.CanvasTexture(c1);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return { map, normalMap: heightNormalTex(field, W, H, 1.4) };
 }
 
 // ------------------------------------------------------------------ build
@@ -475,15 +1068,11 @@ export function reefGeometry(kind) {
     case 'rock': return rockGeo(subSeed('reefRock'));
     case 'brain': return brainGeo(subSeed('reefBrain'));
     case 'stagA': return stagGeo(subSeed('reefStagA'),
-      new THREE.Color(0.62, 0.4, 0.26), new THREE.Color(0.88, 0.72, 0.5));
+      new THREE.Color(0.48, 0.29, 0.16), new THREE.Color(0.95, 0.85, 0.65));
     case 'stagB': return stagGeo(subSeed('reefStagB'),
-      new THREE.Color(0.34, 0.22, 0.48), new THREE.Color(0.72, 0.5, 0.88));
+      new THREE.Color(0.26, 0.16, 0.40), new THREE.Color(0.82, 0.64, 0.95));
     case 'table': return tableGeo(subSeed('reefTable'));
-    case 'fan': {
-      const g = new THREE.PlaneGeometry(1.3, 1.1, 8, 6);
-      g.translate(0, 0.55, 0);
-      return g;
-    }
+    case 'fan': return fanGeo();
     case 'sponge': return spongeGeo(subSeed('reefSponge'));
     case 'anemone': return anemoneGeo(subSeed('reefAnem'));
     case 'urchin': return urchinGeo(subSeed('reefUrchin'));
@@ -501,24 +1090,30 @@ export function reefMaterial(kind) {
   }), name, patch);
 
   switch (kind) {
-    case 'rock': return vertexMat('rock');
-    case 'brain': return uwPatch(new THREE.MeshStandardMaterial({
-      map: brainTexture(), roughness: 0.9,
-    }), 'brain');
+    case 'rock': return vertexMat('rock', { roughness: 0.94 });
+    case 'brain': return vertexMat('brain', {
+      roughness: 0.88, normalMap: brainDetailNormal(),
+      normalScale: new THREE.Vector2(0.7, 0.7),
+    });
     case 'stagA': return vertexMat('stagA');
     case 'stagB': return vertexMat('stagB');
     case 'table': return vertexMat('table');
-    case 'fan': return uwPatch(new THREE.MeshStandardMaterial({
-      map: fanTexture(), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.8,
-    }), 'fan', { sway: 0.5, swaySpeed: 0.8 });
-    case 'sponge': return uwPatch(new THREE.MeshStandardMaterial({
-      map: spongeTexture(), roughness: 0.92,
-    }), 'sponge');
-    case 'anemone': return vertexMat('anemone', { roughness: 0.6 }, { sway: 3.2, swaySpeed: 1.6 });
-    case 'urchin': return vertexMat('urchin', { roughness: 0.5 });
-    case 'star': return uwPatch(new THREE.MeshStandardMaterial({
-      map: starTexture(), roughness: 0.8,
-    }), 'star');
+    case 'fan': {
+      const { map, normalMap } = fanTextures();
+      return uwPatch(new THREE.MeshStandardMaterial({
+        map, normalMap, normalScale: new THREE.Vector2(0.8, 0.8),
+        alphaTest: 0.35, side: THREE.DoubleSide, roughness: 0.78,
+      }), 'fan', { sway: 0.5, swaySpeed: 0.8 });
+    }
+    case 'sponge': {
+      const { map, normalMap } = spongeTextures();
+      return uwPatch(new THREE.MeshStandardMaterial({
+        map, normalMap, normalScale: new THREE.Vector2(1.0, 1.0), roughness: 0.95,
+      }), 'sponge');
+    }
+    case 'anemone': return vertexMat('anemone', { roughness: 0.55 }, { sway: 3.2, swaySpeed: 1.6 });
+    case 'urchin': return vertexMat('urchin', { roughness: 0.45 });
+    case 'star': return vertexMat('star', { roughness: 0.72 });
     case 'grass': return vertexMat('grass', { side: THREE.DoubleSide }, { sway: 1.4, swaySpeed: 1.1 });
     default: throw new Error('unknown reef kind: ' + kind);
   }
@@ -529,16 +1124,23 @@ const byKind = (fn) => Object.fromEntries(REEF_KINDS.map((k) => [k, fn(k)]));
 // A giant clam of half-width `s`: a cupped bottom shell, a hinged lid, and
 // the iridescent mantle between them. update() in buildReef swings the lid.
 export function clamAssets() {
+  const shell = clamShellTextures();
+  const mant = clamMantleTextures();
   return {
     shellGeo: clamShellGeo(),
     // both valves are open hemispheres, so the inner face has to render:
     // without DoubleSide you can see straight through a gaping clam
     shellMat: uwPatch(new THREE.MeshStandardMaterial({
-      map: clamShellTexture(), roughness: 0.8, side: THREE.DoubleSide,
+      map: shell.map, normalMap: shell.normalMap,
+      normalScale: new THREE.Vector2(0.9, 0.9),
+      roughness: 0.74, side: THREE.DoubleSide,
     }), 'clamshell'),
     mantleMat: uwPatch(new THREE.MeshStandardMaterial({
-      map: clamMantleTexture(), roughness: 0.4, side: THREE.DoubleSide,
-      emissive: new THREE.Color(0.04, 0.22, 0.24),
+      map: mant.map, normalMap: mant.normalMap,
+      normalScale: new THREE.Vector2(0.7, 0.7),
+      roughness: 0.35, side: THREE.DoubleSide,
+      emissive: new THREE.Color(0.5, 1.0, 1.0), emissiveMap: mant.map,
+      emissiveIntensity: 0.13,
     }), 'clammantle'),
   };
 }
@@ -557,12 +1159,28 @@ export function clamRig(s, { shellGeo, shellMat, mantleMat }) {
   top.position.x = s;
   lid.add(top);
   g.add(lid);
-  const mantle = new THREE.Mesh(
-    new THREE.TorusGeometry(s * 0.72, s * 0.17, 7, 22),
-    mantleMat
-  );
+  // the mantle: a torus reshaped into a sinuous pillow ring — its radius
+  // follows the shell scallops and its surface ripples up and down, so the
+  // flesh looks squeezed between the fluted lips instead of a swim ring
+  const mantleGeo = new THREE.TorusGeometry(s * 0.72, s * 0.16, 12, 64);
+  {
+    const p = mantleGeo.attributes.position;
+    const R0 = s * 0.72;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const u = Math.atan2(y, x);
+      const scal = 1 + 0.07 * Math.sin(u * 6 + 0.9) + 0.02 * Math.sin(u * 17 + 2.1);
+      const cx = Math.cos(u) * R0, cy = Math.sin(u) * R0;
+      p.setXYZ(i,
+        cx * scal + (x - cx),
+        cy * scal + (y - cy),
+        z + s * (0.06 * Math.sin(u * 11 + 1.0) + 0.03 * Math.sin(u * 19)));
+    }
+    mantleGeo.computeVertexNormals();
+  }
+  const mantle = new THREE.Mesh(mantleGeo, mantleMat);
   mantle.rotation.x = -Math.PI / 2;
-  mantle.position.y = s * 0.5;
+  mantle.position.y = s * 0.47;
   mantle.scale.z = 0.55;
   g.add(mantle);
   return { g, lid, mantle };

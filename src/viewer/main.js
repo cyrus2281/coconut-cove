@@ -401,7 +401,13 @@ loadCreature(REGISTRY[0]);
 // debug hooks for tooling/screenshots: pick a creature by id, set a pose,
 // orbit the camera by angles
 window.__viewer = {
-  state, camera, controls, audio: audioStudio,
+  state, camera, controls, audio: audioStudio, renderer, scene,
+  // one-shot frame grab that works even when the tab isn't compositing
+  snap(q = 0.85) {
+    controls.update();
+    renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/jpeg', q);
+  },
   load(id) {
     const entry = REGISTRY.find((e) => e.id === id);
     if (entry) loadCreature(entry);
