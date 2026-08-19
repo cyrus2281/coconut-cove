@@ -1,9 +1,9 @@
 // The ghost crab as an asset: a sculpted trapezoid carapace with a granular
 // painted shell (speckle, gastric groove, rim shading and a matching bump
-// map), banded three-segment legs, asymmetric claws with parted pincers,
-// and tall club-tipped eye stalks. crabs.js owns the darting/fleeing brain
-// and drives the hip and claw pivots; the /components viewer drives them
-// from buttons.
+// map), banded three-segment legs, asymmetric chelipeds whose pincers gape
+// on a real hinge, and tall club-tipped eye stalks. crabs.js owns the
+// darting/fleeing brain and drives the hips, the claw pivots and the
+// pincers; the /components viewer drives them from buttons.
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -171,28 +171,130 @@ function buildLegGeometry() {
   ]);
 }
 
-// claw: arm, rounded palm, fixed finger; the movable dactyl is its own
-// mesh so the pincer sits slightly parted. sign mirrors, k scales (ghost
-// crabs carry one big and one small claw)
+// ------------------------------------------------------------------- claw
+// A cheliped the way a ghost crab wears it: the merus swings out to the
+// side, the carpus turns the corner forward, and the propodus — the palm —
+// is a laterally flattened egg carrying the fixed finger (the pollex) out
+// of its lower edge. The dactyl above it is a separate mesh on its own
+// hinge, so the pincer gapes and shuts. Both fingers taper to a hook and
+// carry a row of tubercle teeth along the bite. `sign` mirrors the limb
+// onto the other side; `k` scales it (one claw is much the bigger).
+//
+// Stations along the arm, in the claw's own frame: +z runs out along the
+// limb, +x is outboard, +y up. Everything is scaled by k and mirrored by
+// sign as it is built.
+const CLAW = {
+  arm: [[0, 0, 0], [0.024, -0.004, 0.010], [0.028, 0.003, 0.032]],
+  armR: [0.0085, 0.0072, 0.0085], // shoulder, elbow, wrist
+  hinge: [0.029, 0.0135, 0.060],  // where the dactyl swings from
+  // pollex: bellied under the gape, hooking back up at the tip
+  pollex: [[0.029, -0.0088, 0.058], [0.031, -0.0115, 0.076],
+    [0.033, -0.008, 0.090], [0.034, -0.0035, 0.098]],
+  pollexR: [0.0068, 0.0045, 0.0026, 0.0006],
+  // dactyl, in the hinge's frame: it arcs down to close on the pollex tip
+  dactyl: [[0, 0, 0], [0.002, -0.005, 0.016],
+    [0.004, -0.013, 0.030], [0.005, -0.0175, 0.038]],
+  dactylR: [0.0068, 0.0042, 0.0025, 0.0006],
+};
+
+// One run of the limb: tapered tubes between the stations with a knuckle at
+// each bend, so the joints read as one shell rather than cut pipe.
+function clawLimb(stations, radii, sign, k, seg = 8) {
+  const P = stations.map(([x, y, z]) => [x * sign * k, y * k, z * k]);
+  const parts = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    parts.push(tube(...P[i], ...P[i + 1], radii[i] * k, radii[i + 1] * k, seg));
+    if (i > 0) parts.push(new THREE.SphereGeometry(radii[i] * k * 0.96, seg, 6).translate(...P[i]));
+  }
+  return parts;
+}
+
+// A row of tubercles walked from a to b: the teeth down a biting edge, or
+// the stridulating ridge on the big claw's inner face.
+function tubercles(a, b, n, r0, r1, sign, k, shape = [0.55, 0.9, 1.3]) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const t = n > 1 ? i / (n - 1) : 0.5;
+    const r = (r0 + (r1 - r0) * t) * k;
+    const g = new THREE.SphereGeometry(r, 6, 5);
+    g.scale(...shape);
+    g.translate(
+      (a[0] + (b[0] - a[0]) * t) * sign * k,
+      (a[1] + (b[1] - a[1]) * t) * k,
+      (a[2] + (b[2] - a[2]) * t) * k
+    );
+    out.push(g);
+  }
+  return out;
+}
+
+// The palm: an egg squeezed flat side to side, narrowed where the fingers
+// leave it and heeled where it meets the wrist.
+function clawPalmGeometry(sign, k) {
+  const geo = new THREE.SphereGeometry(1, 16, 12);
+  const p = geo.attributes.position;
+  const HX = 0.0115, HY = 0.018, HZ = 0.021; // deep and beefy, but narrow
+  const n = geo.attributes.normal;
+  for (let i = 0; i < p.count; i++) {
+    const nx = p.getX(i), ny = p.getY(i), nz = p.getZ(i);
+    const front = Math.max(nz, 0), back = Math.max(-nz, 0);
+    const taper = (1 - 0.42 * Math.pow(front, 1.6)) * (1 - 0.14 * back * back);
+    // a keel over the top, a flat run underneath into the fixed finger
+    const keel = 1 + 0.1 * Math.max(ny, 0) * (1 - front) - 0.12 * Math.max(-ny, 0) * front;
+    const sx = HX * taper, sy = HY * taper * keel;
+    p.setXYZ(i, nx * sx * k, ny * sy * k, nz * HZ * k);
+    // normals off the ellipsoid rather than recomputed: computeVertexNormals
+    // would leave a crease down the sphere's UV seam
+    const v = new THREE.Vector3(nx / sx, ny / sy, nz / HZ).normalize();
+    n.setXYZ(i, v.x, v.y, v.z);
+  }
+  geo.rotateX(-0.06); // the palm rides nose-up out of the wrist
+  geo.translate(0.028 * sign * k, 0.001 * k, 0.050 * k);
+  return geo;
+}
+
+// The leg skin bands every tube at both ends, which is right for an arm and
+// wrong for a finger: a finger is one unbroken piece of shell. Drag the run
+// into a clean stretch of the texture instead, palest toward the tip.
+function unband(geos, z0, z1, k) {
+  for (const g of geos) {
+    const uv = g.attributes.uv, pos = g.attributes.position;
+    for (let i = 0; i < uv.count; i++) {
+      const t = THREE.MathUtils.clamp((pos.getZ(i) / k - z0) / (z1 - z0), 0, 1);
+      uv.setY(i, 0.8 - 0.24 * t);
+    }
+  }
+  return geos;
+}
+
 function buildClawGeometry(sign, k) {
-  const palm = new THREE.SphereGeometry(0.02 * k, 12, 10);
-  palm.scale(1.4, 0.98, 1.22);
-  palm.rotateY(sign * 0.3);
-  palm.translate(0.016 * sign * k, -0.002, 0.052 * k);
   const parts = [
-    tube(0, 0, 0, 0.012 * sign * k, -0.005, 0.03 * k, 0.0062 * k, 0.008 * k),
-    palm,
-    // fixed finger: lower jaw of the pincer, curving in
-    tube(0.02 * sign * k, -0.006, 0.066 * k, 0.024 * sign * k, -0.002, 0.088 * k, 0.0042 * k, 0.0008),
+    ...clawLimb(CLAW.arm, CLAW.armR, sign, k),
+    clawPalmGeometry(sign, k),
+    ...unband([
+      ...clawLimb(CLAW.pollex, CLAW.pollexR, sign, k, 7),
+      // teeth up the biting edge, coarse at the base, fine at the tip
+      ...tubercles([0.0305, -0.0060, 0.072], [0.0335, -0.0045, 0.093], 6,
+        0.0015, 0.0008, sign, k),
+    ], 0.060, 0.098, k),
   ];
+  if (k > 1) {
+    // the major claw's stridulating ridge, on the face turned inboard
+    parts.push(...tubercles([0.0182, -0.006, 0.038], [0.0192, 0.006, 0.058], 7,
+      0.0022, 0.0018, sign, k, [0.3, 1.1, 0.6]));
+  }
   return mergeGeometries(parts);
 }
 
+// The movable finger, built around its hinge so the whole mesh swings on it.
 function buildDactylGeometry(sign, k) {
-  // movable finger: hinges at the palm top, arcs down to meet the tip
   return mergeGeometries([
-    tube(0.018 * sign * k, 0.007, 0.06 * k, 0.024 * sign * k, 0.012, 0.078 * k, 0.0036 * k, 0.0016),
-    tube(0.024 * sign * k, 0.012, 0.078 * k, 0.025 * sign * k, 0.002, 0.09 * k, 0.0016, 0.0005),
+    new THREE.SphereGeometry(0.0074 * k, 9, 7), // the hinge knuckle itself
+    ...unband([
+      ...clawLimb(CLAW.dactyl, CLAW.dactylR, sign, k, 7),
+      ...tubercles([0.0022, -0.0083, 0.010], [0.0045, -0.0157, 0.031], 5,
+        0.0015, 0.0008, sign, k),
+    ], 0, 0.038, k),
   ]);
 }
 
@@ -245,7 +347,10 @@ export function buildCrab(tint) {
     g.add(glint);
   }
 
-  // claws: the major and the minor, pincers slightly parted
+  // claws: the major and the minor, each held out on a shoulder pivot with
+  // its dactyl on a hinge of its own. crabs.js swings the shoulder to throw
+  // the claws up and works the hinge to gape the pincer; the pivot carries
+  // the hinge on userData so both drivers can find it.
   const claws = [];
   const clawScale = [1.18, 0.85]; // left big, right small
   for (const [i, sign] of [-1, 1].entries()) {
@@ -256,8 +361,14 @@ export function buildCrab(tint) {
     const claw = new THREE.Mesh(buildClawGeometry(sign, k), clawMat);
     claw.castShadow = true;
     pivot.add(claw);
+    const jaw = new THREE.Group();
+    jaw.position.set(CLAW.hinge[0] * sign * k, CLAW.hinge[1] * k, CLAW.hinge[2] * k);
+    jaw.rotation.x = -0.06; // resting gape
     const dactyl = new THREE.Mesh(buildDactylGeometry(sign, k), clawMat);
-    pivot.add(dactyl);
+    dactyl.castShadow = true;
+    jaw.add(dactyl);
+    pivot.add(jaw);
+    pivot.userData.jaw = jaw;
     g.add(pivot);
     claws.push(pivot);
   }

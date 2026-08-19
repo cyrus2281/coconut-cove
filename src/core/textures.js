@@ -497,12 +497,50 @@ export function huskTexture() {
     ctx.quadraticCurveTo(x + Math.sin(a) * len * 0.5 + rand() * 3 - 1.5, y + len * 0.5, x + Math.sin(a) * len, y + len);
     ctx.stroke();
   }
-  // germination eyes near the top pole (v ~ 0.06)
-  ctx.fillStyle = 'rgba(38,26,15,0.9)';
-  for (const u of [0.3, 0.5, 0.7]) {
+  // The three germination pores — the coconut's face. A real nut wears them
+  // in a tight triangle on one end, so they are drawn as one cluster rather
+  // than spread evenly around the pole. Off the pole the sphere's UVs barely
+  // pinch, so each pore stays round instead of smearing the way one drawn
+  // over the pole does. Radii are angles on the nut turned into pixels: the
+  // sheet spans 2*pi across u and only pi down v, so a pore is half as wide
+  // as it is tall, divided again by its latitude's foreshortening.
+  const EYES = [
+    { u: 0.5, v: 0.25, a: 0.082 },    // the soft eye, the one that sprouts
+    { u: 0.4715, v: 0.33, a: 0.072 },
+    { u: 0.5285, v: 0.33, a: 0.072 },
+  ];
+
+  // the face is balder and a shade darker than the rest of the husk
+  ctx.save();
+  ctx.translate(0.5 * S, 0.3 * S);
+  ctx.scale(0.6, 1); // the same u squeeze the pores get
+  const face = ctx.createRadialGradient(0, 0, 0, 0, 0, 0.15 * S);
+  face.addColorStop(0, 'rgba(46,31,18,0.42)');
+  face.addColorStop(1, 'rgba(46,31,18,0)');
+  ctx.fillStyle = face;
+  ctx.fillRect(-0.2 * S, -0.2 * S, 0.4 * S, 0.4 * S);
+  ctx.restore();
+
+  for (const { u, v, a } of EYES) {
+    const x = u * S, y = v * S;
+    const ry = (a / Math.PI) * S;
+    const rx = ry / (2 * Math.sin(Math.PI * v));
+    const pore = (k, fill) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.ellipse(x, y, rx * k, ry * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    pore(1.55, 'rgba(126,96,60,0.5)');   // callused ring around the pit
+    pore(1.18, 'rgba(166,132,86,0.55)'); // raised pale lip
+    pore(1.0, 'rgba(30,20,11,0.95)');    // the pit itself
+    pore(0.55, 'rgba(12,8,4,0.95)');     // and its dark floor
+    // a sliver of light on the lip's upper edge
+    ctx.strokeStyle = 'rgba(214,182,132,0.4)';
+    ctx.lineWidth = 1.4;
     ctx.beginPath();
-    ctx.ellipse(u * S, 0.07 * S, 7, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.ellipse(x, y, rx * 1.1, ry * 1.1, 0, Math.PI * 0.9, Math.PI * 1.9);
+    ctx.stroke();
   }
   return track(tex(c));
 }

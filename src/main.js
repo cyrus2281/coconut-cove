@@ -131,6 +131,8 @@ function buildWorldNow() {
   })();
   scene.add(turtles.group);
   audio.attachWorld(player, palms.trees.map((t) => t.crown));
+  // the surf layers pan to the surge beaches, which just moved
+  audio.refreshZones();
   applyAnisotropy(renderer);
   return {
     terrain, heightTex, ocean, pond, horizon, palms, fig, scatterG,

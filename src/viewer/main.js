@@ -3,6 +3,9 @@
 // weather; just the assets, so their looks can be judged fast. Animals come
 // from registry.js, everything else from props.js — a few props (the fig,
 // the campfire, the pond) bring a patch of their own ground with them.
+//
+// The audio section is the odd one out: those entries have nothing to render,
+// so they swap the stage for a panel and hand off to tracks.js.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -10,6 +13,7 @@ import { uniforms } from '../core/env.js';
 import { mulberry32 } from '../core/rng.js';
 import { uwPatch } from '../world/underwater.js';
 import { REGISTRY } from './registry.js';
+import { audioStudio } from './tracks.js';
 
 const canvas = document.getElementById('stage');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -102,7 +106,7 @@ const state = {
   ownGround: false,
   night: false,
   entry: null,
-  view: null,     // { object, anims, state, tick, dispose? }
+  view: null,     // { object, anims, state, tick, dispose?: fn | disposable[] }
   animId: null,
   seed: 2281,
   turntable: false,
@@ -136,8 +140,17 @@ function applyEnv() {
 }
 
 // ---- creature loading ----
+// A view's optional `dispose` is either a teardown function or a list of
+// resources (geometries, materials) the object tree below doesn't reach.
+// Both shapes are in use, and calling the list would throw, so normalise.
+function releaseView(dispose) {
+  if (typeof dispose === 'function') dispose();
+  else for (const r of [].concat(dispose ?? [])) r?.dispose?.();
+}
+
 function disposeView() {
   if (!state.view) return;
+  releaseView(state.view.dispose);
   const shared = !!state.entry.shared;
   state.view.object.traverse((o) => {
     if (o.geometry) o.geometry.dispose();
@@ -206,6 +219,7 @@ function loadCreature(entry, { reseed = false } = {}) {
   for (const m of state.touchedMats) m.wireframe = false;
   state.touchedMats.clear();
   disposeView();
+  audioStudio.leave();
 
   // poses drive the shared weather uniforms (wind bends the palms, a squall
   // beats the campfire down), so hand the next specimen a calm day
@@ -214,6 +228,15 @@ function loadCreature(entry, { reseed = false } = {}) {
   uniforms.uRainWet.value = 0;
 
   state.entry = entry;
+
+  // nothing to build, frame or light: the track plays into the audio panel
+  if (entry.kind === 'audio') {
+    state.animId = audioStudio.enter(entry);
+    renderAnimButtons();
+    renderList();
+    return;
+  }
+
   if (reseed) state.seed = (Math.random() * 0xffffffff) >>> 0;
   const rand = mulberry32(state.seed ^ entry.id.length * 2654435761);
   const view = entry.build(rand);
@@ -277,16 +300,19 @@ const animRow = document.getElementById('animRow');
 const animLabel = animRow.querySelector('.chipLabel');
 function renderAnimButtons() {
   animRow.querySelectorAll('button').forEach((b) => b.remove());
-  const poses = state.view ? state.view.anims.length : 0;
-  animLabel.style.display = poses ? '' : 'none';
-  if (!state.view) return;
-  for (const a of state.view.anims) {
+  // an audio track's poses are the world conditions that drive it (where you
+  // stand, how hard it blows), so they ride the same chip row as a pose
+  const audio = !!state.entry && state.entry.kind === 'audio';
+  const anims = audio ? state.entry.anims : state.view ? state.view.anims : [];
+  animLabel.style.display = anims.length ? '' : 'none';
+  for (const a of anims) {
     const b = document.createElement('button');
     b.className = 'chip' + (state.animId === a.id ? ' on' : '');
     b.textContent = a.label;
     b.addEventListener('click', () => {
       state.animId = a.id;
-      state.view.state.anim = a.id;
+      if (audio) audioStudio.setPose(a.id);
+      else state.view.state.anim = a.id;
       renderAnimButtons();
     });
     animRow.appendChild(b);
@@ -349,9 +375,11 @@ renderer.setAnimationLoop(() => {
   fpsEMA = fpsEMA * 0.95 + (rawDt > 0 ? 1 / rawDt : 60) * 0.05;
 
   if (state.view) state.view.tick(uniforms.uTime.value, dt);
+  if (audioStudio.active) audioStudio.tick(uniforms.uTime.value);
   if (state.turntable) stage.rotation.y += rawDt * 0.5;
   controls.update();
-  renderer.render(scene, camera);
+  // the stage is hidden behind the audio panel; don't pay to draw it
+  if (!audioStudio.active) renderer.render(scene, camera);
 
   updateStatsSoon -= rawDt;
   if (updateStatsSoon <= 0) {
@@ -373,13 +401,19 @@ loadCreature(REGISTRY[0]);
 // debug hooks for tooling/screenshots: pick a creature by id, set a pose,
 // orbit the camera by angles
 window.__viewer = {
-  state, camera, controls,
+  state, camera, controls, audio: audioStudio,
   load(id) {
     const entry = REGISTRY.find((e) => e.id === id);
     if (entry) loadCreature(entry);
     return entry ? entry.label : 'unknown id';
   },
   pose(id, settle = true) {
+    if (state.entry && state.entry.kind === 'audio') {
+      state.animId = id;
+      audioStudio.setPose(id);
+      renderAnimButtons();
+      return;
+    }
     if (!state.view) return;
     state.animId = id;
     state.view.state.anim = id;
@@ -390,6 +424,9 @@ window.__viewer = {
       for (let i = 0; i < 30; i++) state.view.tick(uniforms.uTime.value + i * 0.12, 0.12);
     }
   },
+  play() { audioStudio.entry && audioStudio.entry.shot ? audioStudio.trigger() : audioStudio.play(); },
+  stop() { audioStudio.stop(); },
+  track() { return audioStudio.info(); },
   orbit(azimuth = 0.6, polar = 1.2, dist = null) {
     const r = dist ?? camera.position.distanceTo(controls.target);
     camera.position.set(

@@ -62,6 +62,12 @@ export class OceanAudio {
     this.lp.Q.value = 0.4;
     this.master.connect(this.lp).connect(ctx.destination);
 
+    // every one-shot (gull, thock, splash, bubble, the fire pops) rides this
+    // bus instead of going straight to master, so solo() can hold them back
+    // while a single bed is being auditioned in the component viewer
+    this.fx = ctx.createGain();
+    this.fx.connect(this.master);
+
     const mkLayer = (opts) => {
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -73,32 +79,35 @@ export class OceanAudio {
       filter.Q.value = opts.q;
       const g = ctx.createGain();
       g.gain.value = 0;
+      // unity unless solo() pulls it down: the island always runs the full
+      // mix, the component viewer listens to one layer at a time
+      const solo = ctx.createGain();
       const pan = ctx.createStereoPanner();
-      src.connect(filter).connect(g).connect(pan).connect(this.master);
+      src.connect(filter).connect(g).connect(solo).connect(pan).connect(this.master);
       src.start();
-      const layer = { ...opts, filter, g, pan, baseFreq: opts.freq };
+      const layer = { ...opts, src, filter, g, solo, pan, baseFreq: opts.freq };
       this.layers.push(layer);
       return layer;
     };
 
     // surf on the two surge beaches, phased so the crash lands with the bore
-    mkLayer({ kind: 'zone', az: ZONES[0].az, freq: 650, q: 0.6, period: 13.0, phase: 0.44, gainMax: 0.8, pow: 2.6 });
-    mkLayer({ kind: 'zone', az: ZONES[1].az, freq: 950, q: 0.7, period: 17.0, phase: -1.96, gainMax: 0.6, pow: 3.0 });
+    mkLayer({ id: 'surf-a', kind: 'zone', az: ZONES[0].az, freq: 650, q: 0.6, period: 13.0, phase: 0.44, gainMax: 0.8, pow: 2.6 });
+    mkLayer({ id: 'surf-b', kind: 'zone', az: ZONES[1].az, freq: 950, q: 0.7, period: 17.0, phase: -1.96, gainMax: 0.6, pow: 3.0 });
     // the everywhere-lap at the waterline
-    mkLayer({ kind: 'lap', freq: 540, q: 0.5, period: 7.0, phase: 2.1, gainMax: 0.3, pow: 1.8 });
+    mkLayer({ id: 'lap', kind: 'lap', freq: 540, q: 0.5, period: 7.0, phase: 2.1, gainMax: 0.3, pow: 1.8 });
     // wind bed
-    mkLayer({ kind: 'wind', freq: 320, q: 0.4, period: 31, phase: 7, gainMax: 0.16, pow: 1 });
+    mkLayer({ id: 'wind', kind: 'wind', freq: 320, q: 0.4, period: 31, phase: 7, gainMax: 0.16, pow: 1 });
     // palm-frond hiss (gain fully driven in update)
-    mkLayer({ kind: 'rustle', type: 'bandpass', freq: 1750, q: 0.9, rate: 1.9 });
+    mkLayer({ id: 'rustle', kind: 'rustle', type: 'bandpass', freq: 1750, q: 0.9, rate: 1.9 });
 
     // rain: bright patter + low wash, silent until a squall
-    this.rainHi = mkLayer({ kind: 'rain', type: 'bandpass', freq: 3200, q: 0.8, rate: 1.7 });
-    this.rainLo = mkLayer({ kind: 'rain', freq: 420, q: 0.5, rate: 1.7 });
+    this.rainHi = mkLayer({ id: 'rain-hi', kind: 'rain', type: 'bandpass', freq: 3200, q: 0.8, rate: 1.7 });
+    this.rainLo = mkLayer({ id: 'rain-lo', kind: 'rain', freq: 420, q: 0.5, rate: 1.7 });
 
     // campfire: a low rushing bed; the pops are scheduled in update()
-    this.fireBed = mkLayer({ kind: 'fire', type: 'bandpass', freq: 820, q: 0.5, rate: 1.35 });
+    this.fireBed = mkLayer({ id: 'fire', kind: 'fire', type: 'bandpass', freq: 820, q: 0.5, rate: 1.35 });
     // the underwater bed: a slow deep wash, silent until you submerge
-    this.uwBed = mkLayer({ kind: 'uw', freq: 210, q: 0.7, rate: 0.62 });
+    this.uwBed = mkLayer({ id: 'uw', kind: 'uw', freq: 210, q: 0.7, rate: 0.62 });
     this.uwK = 0;
     this.noiseBuf = buf;
     this._nextPop = 0;
@@ -154,7 +163,7 @@ export class OceanAudio {
         pg.gain.exponentialRampToValueAtTime(0.001, now + 0.03 + Math.random() * 0.05);
         const pp = this.ctx.createStereoPanner();
         pp.pan.value = pan;
-        src.connect(hp).connect(pg).connect(pp).connect(this.master);
+        src.connect(hp).connect(pg).connect(pp).connect(this.fx);
         src.start(now, Math.random() * 3.5, 0.09);
       }
     }
@@ -219,7 +228,7 @@ export class OceanAudio {
     const amp = 0.26 / (1 + dist * 0.045);
     const out = ctx.createStereoPanner();
     out.pan.value = pan;
-    out.connect(this.master);
+    out.connect(this.fx);
     const syllables = [
       [0, 1380, 920, 0.30],
       [0.34, 1260, 800, 0.40],
@@ -262,7 +271,7 @@ export class OceanAudio {
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
     const p = ctx.createStereoPanner();
     p.pan.value = pan;
-    o.connect(g).connect(p).connect(this.master);
+    o.connect(g).connect(p).connect(this.fx);
     o.start(now);
     o.stop(now + 0.13);
   }
@@ -289,7 +298,7 @@ export class OceanAudio {
     const amp = 0.16 + 0.5 * intensity;
     g.gain.setValueAtTime(amp, now);
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.30 + intensity * 0.25);
-    src.connect(bp).connect(g).connect(this.master);
+    src.connect(bp).connect(g).connect(this.fx);
     src.start(now, Math.random() * 3, 0.6);
   }
 
@@ -307,7 +316,7 @@ export class OceanAudio {
     g.gain.setValueAtTime(0.0001, now);
     g.gain.exponentialRampToValueAtTime(0.05 + Math.random() * 0.05, now + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-    o.connect(g).connect(this.master);
+    o.connect(g).connect(this.fx);
     o.start(now);
     o.stop(now + 0.12);
   }
@@ -317,6 +326,36 @@ export class OceanAudio {
     const now = this.ctx.currentTime;
     this.rainHi.g.gain.setTargetAtTime(k * 0.5, now, 0.8);
     this.rainLo.g.gain.setTargetAtTime(k * 0.28, now, 0.8);
+  }
+
+  // Listen to one thing at a time. `null` is the island's full mix; a layer
+  // id ('surf-a', 'wind', 'uw'...) is that bed alone; 'fx' is the one-shots
+  // alone; `false` is silence. Only the component viewer ever calls this.
+  solo(sel = null) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const all = sel === null || sel === undefined;
+    for (const l of this.layers) {
+      l.solo.gain.setTargetAtTime(all || l.id === sel ? 1 : 0, now, 0.08);
+    }
+    this.fx.gain.setTargetAtTime(all || sel === 'fx' ? 1 : 0, now, 0.08);
+  }
+
+  setVolume(v) {
+    this.volume = v;
+    if (this.ctx && this.master && !this.muted) {
+      this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.15);
+    }
+  }
+
+  // The two surf layers pan to their surge beaches, but they read the zone
+  // bearings once at start() and reseedSwash() swaps those objects out from
+  // under them on every new island. Re-point them at the current coast.
+  refreshZones() {
+    for (const l of this.layers) {
+      if (l.kind !== 'zone') continue;
+      l.az = ZONES[l.id === 'surf-a' ? 0 : 1].az;
+    }
   }
 
   setMuted(m) {

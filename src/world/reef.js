@@ -531,11 +531,13 @@ const byKind = (fn) => Object.fromEntries(REEF_KINDS.map((k) => [k, fn(k)]));
 export function clamAssets() {
   return {
     shellGeo: clamShellGeo(),
+    // both valves are open hemispheres, so the inner face has to render:
+    // without DoubleSide you can see straight through a gaping clam
     shellMat: uwPatch(new THREE.MeshStandardMaterial({
-      map: clamShellTexture(), roughness: 0.8,
+      map: clamShellTexture(), roughness: 0.8, side: THREE.DoubleSide,
     }), 'clamshell'),
     mantleMat: uwPatch(new THREE.MeshStandardMaterial({
-      map: clamMantleTexture(), roughness: 0.4,
+      map: clamMantleTexture(), roughness: 0.4, side: THREE.DoubleSide,
       emissive: new THREE.Color(0.04, 0.22, 0.24),
     }), 'clammantle'),
   };

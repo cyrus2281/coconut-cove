@@ -20,6 +20,7 @@ import { buildShark } from '../creatures/shark.js';
 import { buildButterflyWings, BUTTERFLY_TINTS } from '../creatures/butterfly.js';
 import { silversideAsset } from '../creatures/shorefish.js';
 import { PROPS } from './props.js';
+import { AUDIO_TRACKS } from './tracks.js';
 
 // the species library is session-shared in the viewer (its geometries and
 // materials are never disposed on switch); everything else rebuilds per view
@@ -134,6 +135,9 @@ export const CREATURES = [
           for (let i = 0; i < parts.claws.length; i++) {
             const raise = alarmed ? -0.55 : -0.12 + Math.sin(t * 1.3 + i * 2.1) * 0.1;
             parts.claws[i].rotation.x = THREE.MathUtils.lerp(parts.claws[i].rotation.x, raise, dt * 5);
+            const jaw = parts.claws[i].userData.jaw;
+            const gape = alarmed ? -0.42 : -0.06 + Math.sin(t * 0.9 + i * 3.7) * 0.03;
+            jaw.rotation.x = THREE.MathUtils.lerp(jaw.rotation.x, gape, dt * 5);
           }
           parts.group.position.y = 0.034 + Math.abs(Math.sin(state.gait * 0.5)) * 0.005 * state.bob;
           parts.group.rotation.z = Math.sin(state.gait * 0.5) * 0.03 * state.bob;
@@ -414,4 +418,4 @@ export const CREATURES = [
   },
 ];
 
-export const REGISTRY = [...CREATURES, ...PROPS];
+export const REGISTRY = [...CREATURES, ...PROPS, ...AUDIO_TRACKS];

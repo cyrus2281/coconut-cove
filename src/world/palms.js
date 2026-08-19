@@ -74,8 +74,16 @@ export function windify(mat, key) {
 export function buildFrond(leaf, opts) {
   const {
     origin, crownUp, azimuth, pitch, length, rand, tint,
-    droopRate = 1.0, flexBase = 0.35, phase = 0, dead = false,
+    droopRate = 1.0, flexBase = 0.35, phase = 0, dead = false, floor = null,
   } = opts;
+
+  // A frond droops hard toward its tip, which is right for one hanging off a
+  // crown and wrong for one lying on the sand: the back half of that one
+  // would sink out of sight. `floor(x, z)` gives the lowest a vertex may go,
+  // so a fallen frond settles onto the ground and splays instead.
+  const settle = floor
+    ? (v) => { const gy = floor(v.x, v.z); if (v.y < gy) v.y = gy; return v; }
+    : (v) => v;
 
   // frame around the crown axis
   const s1 = new THREE.Vector3().crossVectors(crownUp, new THREE.Vector3(0.31, 0.05, 0.95).normalize()).normalize();
@@ -107,8 +115,8 @@ export function buildFrond(leaf, opts) {
     if (side.lengthSq() < 0.1) side.set(1, 0, 0);
     const w = 0.055 * (1 - t * 0.8);
     const fl = flexBase * (0.45 + 0.85 * t);
-    const a = leaf.vert(pts[i].clone().addScaledVector(side, -w), 0.46, t * 3, tint, fl, phase);
-    const b = leaf.vert(pts[i].clone().addScaledVector(side, w), 0.54, t * 3, tint, fl, phase);
+    const a = leaf.vert(settle(pts[i].clone().addScaledVector(side, -w)), 0.46, t * 3, tint, fl, phase);
+    const b = leaf.vert(settle(pts[i].clone().addScaledVector(side, w)), 0.54, t * 3, tint, fl, phase);
     rachisIdx.push([a, b]);
   }
   for (let i = 0; i < STEPS; i++) {
@@ -155,9 +163,9 @@ export function buildFrond(leaf, opts) {
         const eS = new THREE.Vector3().crossVectors(ld, U).normalize();
         const fl = flexBase * (0.5 + 0.9 * t) + s * 0.4;
         const dip = wS * 0.5; // edges fold down from the rib
-        const va = leaf.vert(lp.clone().addScaledVector(eS, -wS).addScaledVector(U, -dip), 0.02, s, tint, fl, lphase);
-        const vb = leaf.vert(lp.clone().addScaledVector(U, dip * 0.4), 0.5, s, tint, fl, lphase);
-        const vc = leaf.vert(lp.clone().addScaledVector(eS, wS).addScaledVector(U, -dip), 0.98, s, tint, fl, lphase);
+        const va = leaf.vert(settle(lp.clone().addScaledVector(eS, -wS).addScaledVector(U, -dip)), 0.02, s, tint, fl, lphase);
+        const vb = leaf.vert(settle(lp.clone().addScaledVector(U, dip * 0.4)), 0.5, s, tint, fl, lphase);
+        const vc = leaf.vert(settle(lp.clone().addScaledVector(eS, wS).addScaledVector(U, -dip)), 0.98, s, tint, fl, lphase);
         rows.push([va, vb, vc]);
       }
       for (let si = 0; si < rows.length - 1; si++) {
@@ -394,6 +402,7 @@ export function buildPalms() {
       length: 2.2, rand,
       tint: [0.55, 0.4, 0.22],
       droopRate: 0.5, flexBase: 0.02, phase: 0, dead: true,
+      floor: (fx, fz) => islandHeight(fx, fz) + 0.02,
     });
   }
 

@@ -107,9 +107,43 @@
       position: fixed; left: 224px; bottom: 12px; z-index: 10;
       font-size: 11px; opacity: 0.45; letter-spacing: 0.05em;
     }
+    /* ---- audio section: no stage, no specimen, just the track ---- */
+    body.audio-mode #stage,
+    body.audio-mode #envRow,
+    body.audio-mode #hud,
+    body.audio-mode #hint { display: none; }
+
+    #audioPanel { display: none; }
+    body.audio-mode #audioPanel {
+      position: fixed; left: 224px; right: 14px; top: 0; bottom: 0; z-index: 5;
+      display: flex; flex-direction: column; justify-content: center;
+      gap: 15px; max-width: 660px; padding-right: 8px;
+    }
+    #audioPanel h2 {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-weight: normal; font-size: 26px; letter-spacing: 0.02em;
+      margin-bottom: 9px;
+    }
+    #apBlurb { font-size: 12.5px; line-height: 1.75; opacity: 0.62; max-width: 58ch; }
+    #apMeter {
+      width: 100%; height: 146px; display: block;
+      background: rgba(7, 22, 32, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 10px;
+    }
+    .apRow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    #apPlay { min-width: 96px; text-align: center; }
+    #apReadout { font-size: 11px; opacity: 0.55; letter-spacing: 0.04em; }
+    #apSpec {
+      font-size: 11px; letter-spacing: 0.04em; opacity: 0.5; line-height: 1.7;
+      border-left: 1px solid rgba(255, 255, 255, 0.18); padding-left: 11px;
+    }
+    #apVol { width: 118px; accent-color: #e8d8b0; }
+
     @media (max-width: 760px) {
       #rail { width: 160px; }
       #topbar, #hint { left: 172px; }
+      body.audio-mode #audioPanel { left: 172px; }
     }
   </style>
 </head>
@@ -150,6 +184,25 @@
   </div>
 
   <div id="hint">drag orbits · wheel zooms · right drag pans</div>
+
+  <!-- the audio section swaps the stage for a track and its controls -->
+  <section id="audioPanel">
+    <div>
+      <h2 id="apName">&nbsp;</h2>
+      <p id="apBlurb"></p>
+    </div>
+    <canvas id="apMeter"></canvas>
+    <div class="apRow">
+      <button class="chip" id="apPlay">play</button>
+      <span id="apReadout"></span>
+    </div>
+    <div id="apSpec"></div>
+    <div class="apRow">
+      <span class="chipLabel">VOLUME</span>
+      <input id="apVol" type="range" min="0" max="1" step="0.01" value="0.4" />
+      <span id="apVolVal">0.40</span>
+    </div>
+  </section>
 
   <script type="module" src="/src/viewer/main.js"></script>
 </body>

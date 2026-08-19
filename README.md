@@ -154,6 +154,16 @@ the island in isolation, each on a lit stage:
 - **Water & horizon** — the freshwater pond in its own basin (calm or in the
   rain), the volcano with its smoke column and night-lit crater, a sister
   island, and the sloop.
+- **Audio** — the one section with nothing to look at: every track the island
+  synthesizes, on its own. Nine looping beds (both surf beaches, the shore
+  lap, wind, palm rustle, the two halves of the rain, the campfire and the
+  underwater wash) and five one-shots (fire crackle, gull cry, coconut thock,
+  splash, bubble), each with a live spectrum, a level meter, and the filter,
+  swell and gain numbers read straight off the running node graph. Here the
+  poses are **where you hear it from**: at the waterline or up the dune, under
+  the crown or a few steps off, blazing or dying down, drizzle or downpour.
+  The layer soloed is the island's own, stood on island #2281 with a stub
+  listener, so a track sounds exactly as it does out there.
 
 Every entry is built by the island's own code, so what you judge here is
 what grows out there; the props that hunt for a site (fig, campfire, pond)
@@ -161,7 +171,7 @@ bring a patch of real terrain with them, and **reroll** regrows the island
 under them. Plus beach and underwater lighting, night mode, turntable,
 wireframe, and live triangle/fps stats. (`window.__viewer` offers
 `load(id)`, `pose(id)` and `orbit(azimuth, polar, dist)` for scripted
-screenshots.)
+screenshots, plus `play()`, `stop()` and `track()` for the audio section.)
 
 ## Debug console
 

@@ -25,7 +25,8 @@ const N_NUTS = 12;
 export function nutMesh(rand = Math.random, geo = null, tex = null) {
   const r = 0.115 + rand() * 0.03;
   const mesh = new THREE.Mesh(
-    geo ?? new THREE.SphereGeometry(1, 12, 9),
+    // enough segments that the three husk pores stay round on the nut's end
+    geo ?? new THREE.SphereGeometry(1, 20, 16),
     new THREE.MeshStandardMaterial({
       map: tex ?? huskTexture(),
       roughness: 0.9,
@@ -43,7 +44,7 @@ export function buildCoconuts(player, trees, audio) {
   group.name = 'coconuts';
   const rand = mulberry32(subSeed('nuts'));
 
-  const geo = new THREE.SphereGeometry(1, 12, 9);
+  const geo = new THREE.SphereGeometry(1, 20, 16);
   const tex = huskTexture();
   const nuts = [];
 

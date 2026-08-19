@@ -215,6 +215,7 @@ export const PROPS = [
       const { leafMat } = palmMaterials();
       const parts = {};
       const seed = (rand() * 0xffffffff) >>> 0;
+      let lift = 0;
       for (const dead of [false, true]) {
         const leaf = new MeshData();
         buildFrond(leaf, {
@@ -232,9 +233,16 @@ export const PROPS = [
         });
         const mesh = meshOf(leaf, leafMat);
         mesh.rotation.z = dead ? -0.5 : -0.25; // hold it out like a cut frond
+        mesh.updateMatrixWorld(true);
+        lift = Math.max(lift, 0.05 - new THREE.Box3().setFromObject(mesh).min.y);
         group.add(mesh);
         parts[dead ? 'dead' : 'green'] = mesh;
       }
+      // A frond droops far below the butt it hangs from, so posed at the
+      // origin most of the blade would be under the floor. Hang both poses
+      // from the same raised point instead: same anchor, different droop.
+      parts.green.position.y = lift;
+      parts.dead.position.y = lift;
       const state = { anim: 'green' };
       return {
         object: group,

@@ -184,6 +184,10 @@ export function buildCrabs(player, footprints) {
       for (let i = 0; i < c.claws.length; i++) {
         const raise = alarmed ? -0.55 : -0.12 + Math.sin(t * 1.3 + i * 2.1) * 0.1;
         c.claws[i].rotation.x = THREE.MathUtils.lerp(c.claws[i].rotation.x, raise, dt * 5);
+        // a spooked crab throws the claws up and gapes the pincers with them
+        const jaw = c.claws[i].userData.jaw;
+        const gape = alarmed ? -0.42 : -0.06 + Math.sin(t * 0.9 + i * 3.7) * 0.03;
+        jaw.rotation.x = THREE.MathUtils.lerp(jaw.rotation.x, gape, dt * 5);
       }
 
       c.group.position.set(

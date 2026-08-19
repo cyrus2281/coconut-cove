@@ -12,9 +12,18 @@ import { mulberry32 } from '../core/rng.js';
 import { tideFromTod } from './swash.js';
 
 export { DAY_CYCLE_SECONDS };
-const DAY_FRAC = 0.72;    // fraction of the cycle with the sun up (~8.6 min day, ~3.4 min night)
+const DAY_FRAC = 0.72;    // fraction of the cycle the sun owns (~7.9 min up, ~4.1 min down)
 const AZ0 = -1.17;        // start-of-cycle azimuth offset
 const START_TOD = 0.60;   // begin in golden afternoon, ~90s before sunset colors
+
+// Both bodies hand over at the same depth below the horizon, which keeps
+// elevation continuous across the day/night seam. It has to be: every tone in
+// the scene is a pure function of sun elevation, so a step here skips the dusk
+// crossfade instead of playing it. (The sun used to reach the seam at 0° and
+// resume at -6.9°, snapping the palettes from 78% dusk straight to night.)
+const HANDOVER = 0.12;
+const SUN_PEAK = 0.80, MOON_PEAK = 0.70;  // noon / midnight elevations
+const SUN_DIP = 0.50, MOON_DIP = 0.40;    // how deep the off-duty body rides
 
 const sstep = (a, b, x) => {
   const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
@@ -328,19 +337,21 @@ export function buildSky(scene, renderer, camera) {
   const _sunDir = new THREE.Vector3(), _moonDir = new THREE.Vector3();
   const _c = new THREE.Color();
 
+  // One shape, two shifts: whichever body owns the window arcs up from the
+  // handover depth, the other dips below it and comes back up to meet it.
   function angles(t01) {
     const az = t01 * Math.PI * 2 + AZ0;
-    let sunElev, moonElev;
-    if (t01 < DAY_FRAC) {
-      const x = t01 / DAY_FRAC;
-      sunElev = Math.sin(Math.PI * x) * 0.80;
-      moonElev = -0.4;
-    } else {
-      const x = (t01 - DAY_FRAC) / (1 - DAY_FRAC);
-      moonElev = Math.sin(Math.PI * x) * 0.70;
-      sunElev = -0.12 - 0.5 * Math.sin(Math.PI * x);
-    }
-    return { az, sunElev, moonElev, moonAz: az + Math.PI * 0.9 };
+    const day = t01 < DAY_FRAC;
+    const x = day ? t01 / DAY_FRAC : (t01 - DAY_FRAC) / (1 - DAY_FRAC);
+    const k = Math.sin(Math.PI * x);
+    const up = -HANDOVER + ((day ? SUN_PEAK : MOON_PEAK) + HANDOVER) * k;
+    const down = -HANDOVER - (day ? MOON_DIP : SUN_DIP) * k;
+    return {
+      az,
+      sunElev: day ? up : down,
+      moonElev: day ? down : up,
+      moonAz: az + Math.PI * 0.9,
+    };
   }
 
   function apply(t) {
