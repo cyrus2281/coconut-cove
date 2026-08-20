@@ -92,7 +92,7 @@ function buildWorldNow() {
   reseedSwash(pickZoneAz); // …so the surge beaches can pick sandy shores
   player.respawn();
   const maps = bakeMaps(1024);
-  const terrain = buildTerrain();
+  const terrain = buildTerrain(maps);
   scene.add(terrain);
   const ocean = buildOcean(maps.heightTex);
   scene.add(ocean.group);

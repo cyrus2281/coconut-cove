@@ -15,7 +15,9 @@ import { Simplex2, mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
 import { subSeed } from '../core/seed.js';
 import { swashUniforms, SWASH_GLSL } from './swash.js';
-import { sandTextures, causticTexture, foamTexture } from '../core/textures.js';
+import {
+  sandTextures, causticTexture, foamTexture, forestFloorTexture, rockTexture,
+} from '../core/textures.js';
 
 // Everything that defines this island's shape lives in these lets and is
 // regrown from the master seed by reseedIsland().
@@ -553,8 +555,11 @@ function classifyWeights(x, z, h, slopeY, out) {
 
   const trail = trailMask(x, z);
   const steep = sstep(0.13, 0.34, 1 - slopeY);                 // rock from ~30°
-  const face = cK * sstep(2, 8, t) * (1 - sstep(_cW + 20, _cW + 60, t));
-  const alt = sstep(26, 34, h);                                // bare summits
+  // the cliff-face band goes full rock only where the ground actually
+  // tilts — the flat headland shelf keeps a heathy mix
+  const face = cK * sstep(2, 8, t) * (1 - sstep(_cW + 20, _cW + 60, t))
+    * (0.4 + 0.6 * sstep(0.05, 0.18, 1 - slopeY));
+  const alt = sstep(26, 34, h) * (0.55 + 0.45 * sstep(0.04, 0.15, 1 - slopeY));
   const rock = Math.min(Math.max(steep, Math.max(face, alt)), 1) * (1 - trail);
 
   const forest = sstep(38, 58, t)
@@ -742,8 +747,8 @@ function chunkGeometry(x0, z0, segs, skirt) {
   return geo;
 }
 
-export function buildTerrain() {
-  const mat = buildTerrainMaterial();
+export function buildTerrain(maps) {
+  const mat = buildTerrainMaterial(maps);
   const group = new THREE.Group();
   group.name = 'terrain';
 
@@ -782,7 +787,7 @@ export function buildTerrain() {
   return group;
 }
 
-function buildTerrainMaterial() {
+function buildTerrainMaterial(maps) {
   const { map, normalMap } = sandTextures();
   const TILE = 5.2; // meters per texture repeat
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
@@ -800,6 +805,8 @@ function buildTerrainMaterial() {
 
   const caustics = causticTexture();
   const breakup = foamTexture(); // reused as a generic tileable noise mask
+  const grassMap = forestFloorTexture();
+  const rockMap = rockTexture();
 
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime;
@@ -812,14 +819,20 @@ function buildTerrainMaterial() {
     shader.uniforms.uLagoon2 = uniforms.uLagoon2;
     shader.uniforms.uCaustic = { value: caustics };
     shader.uniforms.uBreakup = { value: breakup };
+    shader.uniforms.uGrassMap = { value: grassMap };
+    shader.uniforms.uRockMap = { value: rockMap };
+    shader.uniforms.uBiome = { value: maps.biomeTex };
+    shader.uniforms.uBiomeHalf = { value: maps.half };
     Object.assign(shader.uniforms, swashUniforms);
 
     shader.vertexShader = `
       varying vec3 vWPos;
+      varying vec3 vNrmW;
     ` + shader.vertexShader.replace(
       '#include <begin_vertex>',
       `#include <begin_vertex>
-       vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+       vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+       vNrmW = normalize(mat3(modelMatrix) * objectNormal);`
     );
 
     shader.fragmentShader = `
@@ -833,6 +846,10 @@ function buildTerrainMaterial() {
       uniform vec4 uLagoon2;
       uniform sampler2D uCaustic;
       uniform sampler2D uBreakup;
+      uniform sampler2D uGrassMap;
+      uniform sampler2D uRockMap;
+      uniform sampler2D uBiome;
+      uniform float uBiomeHalf;
       uniform vec4 uZone1;
       uniform float uZone1Ph;
       uniform vec4 uZone2;
@@ -840,6 +857,7 @@ function buildTerrainMaterial() {
       uniform vec2 uAmbient;
       uniform float uDrySecs;
       varying vec3 vWPos;
+      varying vec3 vNrmW;
       float bhash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       ${SWASH_GLSL}
     ` + shader.fragmentShader
@@ -852,6 +870,39 @@ function buildTerrainMaterial() {
           float macro2 = texture2D(uBreakup, vWPos.xz * 0.05 + 17.3).r;
           diffuseColor.rgb *= mix(vec3(0.90, 0.87, 0.80), vec3(1.10, 1.06, 0.99), macro);
           diffuseColor.rgb *= mix(1.0, 0.90, smoothstep(0.62, 0.9, macro2));
+
+          // --- biome blend: sand → forest floor → rock → trail dirt ---
+          // weights come from the baked mask (R sand, G trail, B rock,
+          // A forest); slope-rock is sharpened per-fragment off the real
+          // normal so cliff faces stay crisp between mask texels.
+          vec2 buv = (vWPos.xz + uBiomeHalf) / (2.0 * uBiomeHalf);
+          vec4 bio = texture2D(uBiome, buv);
+          vec3 nrmW = normalize(vNrmW);
+          float slopeRock = smoothstep(0.16, 0.34, 1.0 - nrmW.y);
+          float rockW = min(max(bio.b, slopeRock) * (1.0 - bio.g), 1.0);
+          float trailW = bio.g;
+          float forestW = bio.a * (1.0 - rockW) * (1.0 - trailW);
+          float sandW = clamp(bio.r * (1.0 - rockW) * (1.0 - trailW), 0.0, 1.0);
+          // whatever's left inland reads as dry meadow grass
+          float meadowW = clamp(1.0 - sandW - rockW - trailW - forestW, 0.0, 1.0);
+
+          vec3 grassC = texture2D(uGrassMap, vWPos.xz / 7.5).rgb;
+          // rock: strata band in a vertical plane on faces, flat map on tops
+          // (a pure vertical projection smears one texel row across level
+          // ground as streaks)
+          vec2 ruv = (abs(nrmW.x) > abs(nrmW.z) ? vWPos.zy : vWPos.xy) / 9.0;
+          vec3 rockV = texture2D(uRockMap, ruv).rgb;
+          vec3 rockH = texture2D(uRockMap, vWPos.xz / 9.0).rgb;
+          vec3 rockC = mix(rockV, rockH, smoothstep(0.5, 0.8, nrmW.y));
+          vec3 meadowC = mix(grassC, vec3(0.62, 0.58, 0.34), 0.45); // sun-dried grass
+
+          vec3 ground = diffuseColor.rgb;
+          ground = mix(ground, meadowC * (0.8 + 0.4 * macro), meadowW);
+          ground = mix(ground, grassC * (0.82 + 0.36 * macro), forestW);
+          ground = mix(ground, rockC * (0.88 + 0.24 * macro), rockW);
+          ground = mix(ground, diffuseColor.rgb * vec3(0.72, 0.60, 0.48), trailW);
+          diffuseColor.rgb = ground;
+          vSandW = sandW;
 
           // --- wet sand from the shared swash model ---
           // ragged wet line: jitter the effective height with noise.
@@ -934,10 +985,11 @@ function buildTerrainMaterial() {
             totalEmissiveRadiance += vec3(1.0, 0.97, 0.86) * (ca * cb * cstr) * cmask * uSunI;
           }
           // sand sparkle: sparse micro-facets that glint as the view moves
+          // (humus and rock barely glint — the beach keeps the glitter)
           vec3 vdir = normalize(vViewPosition);
           vec2 cell = floor(vWPos.xz * 240.0);
           float g = bhash(cell + floor(vdir.xy * 7.0));
-          float glint = smoothstep(0.9975, 1.0, g);
+          float glint = smoothstep(0.9975, 1.0, g) * (0.15 + 0.85 * vSandW);
           totalEmissiveRadiance += vec3(1.0, 0.98, 0.9) * glint * (0.22 + vWetness * 0.5) * uSunI;
           // night bioluminescence traces the retreating swash line
           totalEmissiveRadiance += vec3(0.10, 1.55, 1.28) * vBio * uNightF;
@@ -947,10 +999,10 @@ function buildTerrainMaterial() {
     // declare the bridge variables once, at the top of main()
     shader.fragmentShader = shader.fragmentShader.replace(
       'void main() {',
-      'float vWetness = 0.0;\nfloat vBio = 0.0;\nfloat vSub = 0.0;\nfloat vLagMask = 0.0;\nvoid main() {'
+      'float vWetness = 0.0;\nfloat vBio = 0.0;\nfloat vSub = 0.0;\nfloat vLagMask = 0.0;\nfloat vSandW = 1.0;\nvoid main() {'
     );
   };
-  mat.customProgramCacheKey = () => 'cove-sand-v7';
+  mat.customProgramCacheKey = () => 'cove-terrain-v8';
 
   return mat;
 }

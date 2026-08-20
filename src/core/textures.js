@@ -150,6 +150,113 @@ export function sandTextures() {
   };
 }
 
+// ---------------------------------------------------------------- forest floor
+// Humus and leaf litter for the island interior: dark earth with moss
+// blotches, a season's worth of fallen-leaf flecks and a few twigs.
+export function forestFloorTexture() {
+  const S = 512;
+  const rand = mulberry32(61);
+  const macro = noiseField(S, 62, 5, 4);
+  const moss = noiseField(S, 63, 4, 6);
+  const [c, ctx] = makeCanvas(S, S);
+
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < S * S; i++) {
+    const m = macro[i];
+    const g = Math.max(moss[i] - 0.55, 0) * 2.2; // mossy patches
+    img.data[i * 4] = 74 + m * 30 - 15 - g * 22;
+    img.data[i * 4 + 1] = 62 + m * 26 - 13 + g * 26;
+    img.data[i * 4 + 2] = 44 + m * 20 - 10 - g * 10;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // leaf litter: small tinted ellipses, brown through fresh-fallen green
+  const leaves = [
+    ['#7a5a32', 0.5, 2600],
+    ['#5c4526', 0.5, 2200],
+    ['#96703a', 0.42, 1500],
+    ['#4f5b28', 0.4, 900],
+    ['#77803a', 0.35, 600],
+    ['#2e2418', 0.5, 800],
+  ];
+  for (const [col, alpha, count] of leaves) {
+    ctx.fillStyle = col;
+    for (let i = 0; i < count; i++) {
+      ctx.globalAlpha = alpha * (0.5 + rand() * 0.5);
+      ctx.beginPath();
+      ctx.ellipse(rand() * S, rand() * S, 1.2 + rand() * 2.4, 0.8 + rand() * 1.2, rand() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // twigs
+  ctx.strokeStyle = '#3a2c1c';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 140; i++) {
+    ctx.globalAlpha = 0.35 + rand() * 0.3;
+    const x = rand() * S, y = rand() * S, a = rand() * Math.PI, l = 4 + rand() * 10;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- rock
+// Cliff and mountain stone: gray-brown strata bands warped by noise, dark
+// cracks wandering through, pale lichen freckles.
+export function rockTexture() {
+  const S = 512;
+  const rand = mulberry32(66);
+  const macro = noiseField(S, 67, 5, 4);
+  const warp = noiseField(S, 68, 3, 4);
+  const [c, ctx] = makeCanvas(S, S);
+
+  const img = ctx.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x;
+      const m = macro[i];
+      // horizontal strata, wobbled so the bands read as bedding planes
+      const band = Math.sin(((y + warp[i] * 150) / S) * Math.PI * 2 * 9);
+      const tone = 134 + m * 44 - 22 + band * 7;
+      img.data[i * 4] = tone;
+      img.data[i * 4 + 1] = tone * 0.94;
+      img.data[i * 4 + 2] = tone * 0.86;
+      img.data[i * 4 + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // cracks: dark random walks, mostly downhill like joints in the face
+  ctx.strokeStyle = '#2c2620';
+  for (let i = 0; i < 110; i++) {
+    ctx.globalAlpha = 0.28 + rand() * 0.3;
+    ctx.lineWidth = 0.7 + rand() * 0.9;
+    let x = rand() * S, y = rand() * S;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const steps = 4 + Math.floor(rand() * 7);
+    for (let sgm = 0; sgm < steps; sgm++) {
+      x += (rand() - 0.5) * 26;
+      y += 6 + rand() * 22;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // lichen freckles
+  for (let i = 0; i < 900; i++) {
+    ctx.globalAlpha = 0.16 + rand() * 0.2;
+    ctx.fillStyle = rand() < 0.6 ? '#9aa06a' : '#c9c4a4';
+    const s = 1 + rand() * 2;
+    ctx.fillRect(rand() * S, rand() * S, s, s);
+  }
+  ctx.globalAlpha = 1;
+  return track(tex(c));
+}
+
 // ---------------------------------------------------------------- footprints
 // Track decal atlas, three cells side by side: bare foot | crab stitches |
 // turtle crawl. R-channel mask + a normal map with pressed-in marks and a
