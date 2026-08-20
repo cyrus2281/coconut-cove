@@ -1,10 +1,13 @@
 // Far scenery: a smoking volcano and a few sister islands hull-down on the
-// horizon. Pure set dressing — they stand far beyond the sloop's 640m lap,
+// horizon. Pure set dressing — they stand kilometres beyond the sloop's lap,
 // unreachable by design (the deep water turns a wader back long before),
-// and exist to give the empty sea an edge. Landforms are wobbled lathe
-// cones with height-banded vertex colors; the exp2 fog paints the aerial
-// haze by day and a squall swallows them whole. At night the volcano's
-// crater backlights the bottom of its own smoke column.
+// and exist to give the empty sea an edge. They are big and far rather than
+// small and near: from the summit, 75m up, anything closer than ~3km sits
+// visibly below the horizon line and reads as a place you could swim to.
+// Landforms are wobbled lathe cones with height-banded vertex colors; the
+// exp2 fog paints the aerial haze by day and a squall swallows them whole.
+// At night the volcano's crater backlights the bottom of its own smoke
+// column.
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
@@ -13,6 +16,12 @@ import { uniforms } from '../core/env.js';
 import { cloudTexture, glowDotTexture } from '../core/textures.js';
 
 const SKIRT = -10; // island bases start below the swell
+
+// How much bigger the far scenery is than it used to be, back when it stood
+// at half this range. Distance is what sells "far away", but distance alone
+// shrinks the skyline to nothing, so the landforms grow with it and the
+// apparent size lands a little under where it was.
+const FAR = 2;
 
 // smoke column: puff lifetime (s), rise rate and downwind drift (m/s)
 const LIFE = 30, RISE = 13, DRIFT = 8;
@@ -51,17 +60,45 @@ export function landform(profile, x, z, wobbles, colorOf, notch) {
   return geo;
 }
 
+// The scene's exp2 fog is tuned so the open sea fades into the sky within a
+// couple of kilometres. Applied at face value it dissolves everything out
+// here into flat white cutouts, which is not how distance looks: real haze
+// over water leaves far land as a pale but legible silhouette long after the
+// sea itself has gone. So the far scenery walks through a thinner slice of
+// the same fog — same color, same weather response, just less of it.
+// Landforms take 0.55 of it. Smoke takes less: ash gray is already almost
+// the color of haze, so where a cone survives at 45% of its own color the
+// plume at that strength is simply gone, and the plume is the whole point of
+// having a volcano out there.
+const HAZE_LAND = 0.55, HAZE_SMOKE = 0.4;
+function farHaze(mat, k) {
+  mat.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      '#include <fog_vertex>',
+      `#include <fog_vertex>
+      #ifdef USE_FOG
+        vFogDepth *= ${k};
+      #endif`
+    );
+  };
+  // onBeforeCompile's source is the program cache key, and the source is the
+  // same for every k — say the k out loud or the first-compiled slice would
+  // be handed to every material sharing a shader type
+  mat.customProgramCacheKey = () => `farHaze${k}`;
+  return mat;
+}
+
 // The far scenery all shares one vertex-colored, matte material.
 export function landformMaterial() {
-  return new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+  return farHaze(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), HAZE_LAND);
 }
 
 // One stratovolcano: a concave flank up to a cratered summit, wobbled off
 // round, with a bite blown out of the rim. Painted in bands — sand skirt,
 // forest flank, bare basalt, pale ash gullies, dark throat.
-export function volcanoCone(rand, { x = 0, z = 0, shrink = 1 } = {}) {
-  const R = (350 + rand() * 80) * shrink;
-  const H = (210 + rand() * 55) * shrink;
+export function volcanoCone(rand, { x = 0, z = 0, scale = 1 } = {}) {
+  const R = (350 + rand() * 80) * scale;
+  const H = (210 + rand() * 55) * scale;
   const rCr = R * 0.16;
   const dep = H * 0.10;
   const pts = [new THREE.Vector2(R, SKIRT)];
@@ -134,14 +171,14 @@ export function volcanoPlume(rand, v, { count = 6, textures = null } = {}) {
   const sprites = [];
   v.puffs = [];
   for (let i = 0; i < count; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+    const s = new THREE.Sprite(farHaze(new THREE.SpriteMaterial({
       map: i % 2 ? smokeTexA : smokeTexB,
       color: new THREE.Color(0.6, 0.58, 0.57),
       transparent: true,
       opacity: 0,
       depthWrite: false,
       fog: true,
-    }));
+    }), HAZE_SMOKE));
     sprites.push(s);
     v.puffs.push({ s, off: i / count, wig: rand() * 6.3 });
   }
@@ -225,10 +262,10 @@ export function buildHorizon() {
   const nVolcanoes = 1 + (rand() < 0.4 ? 1 : 0);
   for (let vi = 0; vi < nVolcanoes; vi++) {
     const vAz = pickAz();
-    const vDist = 2050 + rand() * 450;
+    const vDist = 4600 + rand() * 1000;
     const vx = Math.cos(vAz) * vDist, vz = Math.sin(vAz) * vDist;
-    const shrink = vi === 0 ? 1 : 0.55 + rand() * 0.15;
-    const cone = volcanoCone(rand, { x: vx, z: vz, shrink });
+    const scale = FAR * (vi === 0 ? 1 : 0.55 + rand() * 0.15);
+    const cone = volcanoCone(rand, { x: vx, z: vz, scale });
     addMesh(cone.geo);
     volcanoes.push({ ...cone, geo: undefined, phase: rand() * 9 });
   }
@@ -237,10 +274,12 @@ export function buildHorizon() {
   const humps = 2 + (rand() < 0.5 ? 1 : 0);
   for (let i = 0; i < humps; i++) {
     const az = pickAz();
-    const dist = 1350 + rand() * 1050;
+    const dist = 3400 + rand() * 1900;
     const hx = Math.cos(az) * dist, hz = Math.sin(az) * dist;
     const twin = rand() < 0.4;
-    const spots = [[hx, hz, 150 + rand() * 170, 22 + rand() * 32]];
+    const R0 = (150 + rand() * 170) * FAR * 0.95;
+    const H0 = (22 + rand() * 32) * FAR * 1.05;
+    const spots = [[hx, hz, R0, H0]];
     if (twin) {
       const [x0, z0, r0, h0] = spots[0];
       spots.push([x0 - Math.sin(az) * r0 * 1.5, z0 + Math.cos(az) * r0 * 1.5, r0 * 0.6, h0 * 0.7]);
@@ -260,8 +299,9 @@ export function buildHorizon() {
 
   function update(t) {
     // thick air (mist, a hard squall) swallows the skyline whole: past this
-    // density every landform is ≥95% fogged, and leaving them drawn shows
-    // fog-colored cutouts against the sky dome's own haze
+    // density every landform is ≥95% fogged — the thinner haze slice above
+    // doesn't save them, the nearest one is still 3km out — and leaving them
+    // drawn shows fog-colored cutouts against the sky dome's own haze
     group.visible = uniforms.uFogDensity.value < 0.0013;
     if (!group.visible) return;
     for (const v of volcanoes) updatePlume(v, t);

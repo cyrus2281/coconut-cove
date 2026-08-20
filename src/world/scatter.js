@@ -18,9 +18,13 @@ import { figBase } from './fig.js';
 let scatterNoise = null; // recreated per island inside buildScatter
 let coastK = 1; // sandy-coastline factor vs the old 47m island, set per build
 
-// where this island's cairn stands — the campfire pitches camp beside it
+// where this island's cairn stands — the summit campfire pitches camp beside it
 let CAIRN_POS = null;
 export function cairnPos() { return CAIRN_POS ? { ...CAIRN_POS } : null; }
+
+// and where the hull lies — the beach campfire keeps clear of its ribs
+let WRECK_POS = null;
+export function wreckPos() { return WRECK_POS ? { ...WRECK_POS } : null; }
 
 // How much sandy beach this island has, in multiples of the old island's
 // whole coastline — the drift-line budgets scale with it.
@@ -513,6 +517,7 @@ export function grassMaterial() {
 function placeWreck(group) {
   const rand = mulberry32(subSeed('wreck'));
   const fb = figBase();
+  WRECK_POS = null;
 
   // a dune saddle: inland, dry, on beach sand, clear of the pond, the big
   // tree and the footpath. Keep-best — the island always keeps its wreck.
@@ -535,6 +540,7 @@ function placeWreck(group) {
     if (score > -1.1) break; // a clean dune saddle: take it
   }
   if (!site) return;
+  WRECK_POS = { ...site };
 
   const keelYaw = rand() * Math.PI * 2;
   const geo = wreckGeo(rand);

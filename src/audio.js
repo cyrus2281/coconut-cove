@@ -18,6 +18,7 @@ export class OceanAudio {
     this.volume = 0.4;
     this.player = null;
     this.crowns = [];
+    this.fires = [];
   }
 
   attachWorld(player, crowns) {
@@ -25,10 +26,26 @@ export class OceanAudio {
     this.crowns = crowns || [];
   }
 
-  // the campfire's place in the world + its live intensity (0..1)
+  // the island's campfires: where each one burns + its live intensity
+  // (0..1). They stand an island apart, so only the nearest is ever audible.
+  attachFires(fires) {
+    this.fires = fires || [];
+  }
+
+  // a single fire, for the /components audio bench
   attachFire(pos, fireK) {
-    this.firePos = pos;
-    this.fireK = fireK || (() => 1);
+    this.fires = pos ? [{ pos, fireK: fireK || (() => 1) }] : [];
+  }
+
+  // the fire you are standing at is the one you hear
+  _nearestFire() {
+    if (this.fires.length < 2 || !this.player) return this.fires[0];
+    let best = this.fires[0], bd = Infinity;
+    for (const f of this.fires) {
+      const d = Math.hypot(f.pos.x - this.player.pos.x, f.pos.z - this.player.pos.z);
+      if (d < bd) { bd = d; best = f; }
+    }
+    return best;
   }
 
   start() {
@@ -141,9 +158,10 @@ export class OceanAudio {
     const beach = 1 / (1 + hRel * 0.5); // 1 at the waterline, fades up-dune
 
     // campfire bed + crackle pops, from where the fire actually burns
-    if (this.firePos && this.fireBed) {
-      const k = this.fireK();
-      const { pan, dist } = this._spatial(this.firePos.x, this.firePos.z);
+    if (this.fires.length && this.fireBed) {
+      const fire = this._nearestFire();
+      const k = fire.fireK();
+      const { pan, dist } = this._spatial(fire.pos.x, fire.pos.z);
       const prox = 1 / (1 + Math.max(dist - 2.5, 0) * 0.45);
       this.fireBed.pan.pan.setTargetAtTime(pan, now, 0.3);
       const crackleBed = 0.4 + 0.6 * Math.min(1, Math.abs(Math.sin(t * 1.7) + Math.sin(t * 2.9)) * 0.6);

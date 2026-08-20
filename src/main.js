@@ -113,9 +113,11 @@ function buildWorldNow() {
   scene.add(forest.group);
   const scatterG = buildScatter();
   scene.add(scatterG);
-  const campfire = buildCampfire(); // after scatter: it camps beside the cairn
+  // after scatter and the palms: one fire camps beside the cairn, the other
+  // on the beach, and it wants to know where the trunks are
+  const campfire = buildCampfire(palms.trees);
   scene.add(campfire.group);
-  audio.attachFire(campfire.pos, campfire.fireK);
+  audio.attachFires(campfire.fires);
   const fireflies = buildFireflies(player);
   scene.add(fireflies.group);
   const butterflies = buildButterflies(player);
@@ -462,12 +464,13 @@ window.__beach = {
     rising: Math.sin(uniforms.uTideAng.value) < 0,
   }),
   lagoon: () => lagoonInfo(),
-  // stand by the campfire
-  campview(bearing = 0.8, dist = 3.2) {
-    const c = world.campfire.pos;
+  // stand by one of the campfires: 'beach' or 'summit'
+  campview(where = 'beach', bearing = 0.8, dist = 3.2) {
+    const f = world.campfire.fire(where);
+    const c = f.pos;
     const x = c.x + Math.cos(bearing) * dist, z = c.z + Math.sin(bearing) * dist;
     this.teleport(x, z, Math.atan2(-(c.x - x), -(c.z - z)), -0.18);
-    return { fire: [+c.x.toFixed(1), +c.z.toFixed(1)], k: +world.campfire.fireK().toFixed(2) };
+    return { fire: f.where, at: [+c.x.toFixed(1), +c.z.toFixed(1)], k: +f.fireK().toFixed(2) };
   },
   // stand back from the big fig, looking at it
   figview(bearing = 2.2, dist = 14) {

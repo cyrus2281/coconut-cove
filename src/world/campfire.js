@@ -1,17 +1,25 @@
-// A driftwood campfire beside the summit cairn. Teepee logs and a stone
-// ring are static; the flames are two crossed shader quads (scrolling noise
-// shaped into tongues), embers ride the wind as additive points, smoke
-// puffs drift off downwind, and a warm point light flickers over the sand.
-// A squall beats the fire down to embers and smoke; it recovers when the
-// rain moves on. The crackle lives in audio.js and follows the same k.
+// Two driftwood campfires: one on the dry sand of the arrival beach, one
+// beside the summit cairn at the top of the climb. Same rig both times —
+// teepee logs and a stone ring are static; the flames are two crossed
+// shader quads (scrolling noise shaped into tongues), embers ride the wind
+// as additive points, smoke puffs drift off downwind, and a warm point light
+// flickers over the sand. A squall beats a fire down to embers and smoke; it
+// recovers when the rain moves on. The crackle lives in audio.js and follows
+// whichever fire you are standing at.
+//
+// Only the summit fire gets the cairn beside it — that one is the marker at
+// the end of the trail. The beach fire is just a fire on the sand.
 
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, islandNormal, lagoonFreeboard, summitPos } from './island.js';
+import {
+  islandHeight, islandNormal, lagoonFreeboard, summitPos, primaryGap,
+  shoreRadius, biomeAt, trailQuery,
+} from './island.js';
 import { figBase } from './fig.js';
-import { cairnPos } from './scatter.js';
+import { cairnPos, wreckPos } from './scatter.js';
 import { foamTexture, cloudTexture, barkTexture } from '../core/textures.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
@@ -51,12 +59,8 @@ void main() {
 }
 `;
 
-export function buildCampfire() {
-  const group = new THREE.Group();
-  group.name = 'campfire';
-  const rand = mulberry32(subSeed('campfire'));
-
-  // ---- site: a flat dry shelf near the cairn, not under the fig ----
+// A flat dry shelf near the cairn, not under the fig.
+function summitSite(rand) {
   const cairn = cairnPos();
   const fb = figBase();
   let site = null;
@@ -70,21 +74,61 @@ export function buildCampfire() {
     site = { x, z, h: islandHeight(x, z) };
     break;
   }
-  if (!site) {
-    // no cairn or no flat ground beside it: camp on the summit shelf —
-    // it's guaranteed level, and the fire belongs at the top of the climb
-    const s = summitPos();
-    for (let tries = 0; tries < 120 && !site; tries++) {
-      const a = rand() * Math.PI * 2, rr = 1.5 + Math.sqrt(rand()) * 5;
-      const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
-      if (fb && Math.hypot(x - fb.x, z - fb.z) < 7) continue;
-      if (lagoonFreeboard(x, z) < 1.0) continue;
-      if (islandNormal(x, z).y < 0.96) continue;
-      site = { x, z, h: islandHeight(x, z) };
-    }
-    if (!site) site = { x: s.x + 3, z: s.z, h: islandHeight(s.x + 3, s.z) };
+  if (site) return site;
+  // no cairn or no flat ground beside it: camp on the summit shelf —
+  // it's guaranteed level, and the fire belongs at the top of the climb
+  const s = summitPos();
+  for (let tries = 0; tries < 120; tries++) {
+    const a = rand() * Math.PI * 2, rr = 1.5 + Math.sqrt(rand()) * 5;
+    const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
+    if (fb && Math.hypot(x - fb.x, z - fb.z) < 7) continue;
+    if (lagoonFreeboard(x, z) < 1.0) continue;
+    if (islandNormal(x, z).y < 0.96) continue;
+    return { x, z, h: islandHeight(x, z) };
   }
+  return { x: s.x + 3, z: s.z, h: islandHeight(s.x + 3, s.z) };
+}
 
+const DRY_H = 2.4; // the height up the beach the sand fire aims for
+
+// Dry sand a short walk along the arrival beach: high enough up the slope
+// that no tide (0.45m) and no run-up (0.85m) ever reaches it, still on sand
+// rather than up in the dune grass, level, and clear of the palms, the
+// wreck, the fig, the pond and the footpath. Keep-best — every island keeps
+// this fire, so the hunt scores rather than rejects.
+function beachSite(rand, trees) {
+  const gap = primaryGap();
+  const fb = figBase();
+  const wreck = wreckPos();
+  let site = null, bestScore = -Infinity;
+  for (let tries = 0; tries < 140; tries++) {
+    // along the spawn beach, a few strides either side of where you wake up
+    const az = gap.center + (rand() - 0.5) * Math.min(gap.half * 1.3, 0.55);
+    const r = shoreRadius(az) - (6 + rand() * 7);
+    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    const h = islandHeight(x, z);
+    let score = -Math.abs(h - DRY_H);
+    if (h < 1.6) score -= 12;                              // the sea finds it
+    if (biomeAt(x, z, { h }).w.sand < 0.6) score -= 8;
+    if (islandNormal(x, z).y < 0.985) score -= 7;          // a fire wants level
+    if (lagoonFreeboard(x, z) < 1.0) score -= 20;
+    const tq = trailQuery(x, z);
+    if (tq && tq.d < 3) score -= 8;
+    if (fb && Math.hypot(x - fb.x, z - fb.z) < 10) score -= 10;
+    if (wreck && Math.hypot(x - wreck.x, z - wreck.z) < 7) score -= 10;
+    for (const t of trees) {
+      if (Math.hypot(x - t.base.x, z - t.base.z) < 2.8) { score -= 10; break; }
+    }
+    if (score > bestScore) { bestScore = score; site = { x, z, h }; }
+    if (score > -0.35) break; // clean dry sand: take it
+  }
+  return site;
+}
+
+// One fire, built where it is told to stand. Everything in here is in world
+// space, so a rig is only ever as good as the site handed to it.
+function fireRig(rand, site, where) {
+  const group = new THREE.Group();
   const S = new THREE.Vector3(site.x, site.h, site.z);
 
   // ---- logs: a leaning teepee over a charred heart + two spares ----
@@ -292,5 +336,31 @@ export function buildCampfire() {
     }
   }
 
-  return { group, update, pos: S.clone(), fireK: () => fireK };
+  return { group, where, update, pos: S.clone(), fireK: () => fireK };
+}
+
+export function buildCampfire(trees = []) {
+  const group = new THREE.Group();
+  group.name = 'campfire';
+
+  // One seed stream per fire. The summit fire keeps the stream it has always
+  // drawn from, so adding the beach fire leaves it standing and burning
+  // exactly where it did.
+  const beachRand = mulberry32(subSeed('campfireBeach'));
+  const summitRand = mulberry32(subSeed('campfire'));
+  const fires = [
+    fireRig(beachRand, beachSite(beachRand, trees), 'beach'),
+    fireRig(summitRand, summitSite(summitRand), 'summit'),
+  ];
+  for (const f of fires) group.add(f.group);
+
+  return {
+    group,
+    fires,
+    // 'beach' | 'summit'
+    fire: (where) => fires.find((f) => f.where === where) || fires[0],
+    update(t, dt) {
+      for (const f of fires) f.update(t, dt);
+    },
+  };
 }

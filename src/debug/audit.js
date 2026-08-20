@@ -177,8 +177,9 @@ export function makeAudit(deps) {
       reached(s.x, s.z, 'summit');
       for (const lo of ti.lookouts) reached(lo.x, lo.z, 'lookout ' + lo.name);
       if (L) reached(L.x + L.rOuter + 3, L.z, 'pond bank');
-      const fire = world.campfire.pos;
-      reached(fire.x, fire.z, 'campfire');
+      for (const f of world.campfire.fires) {
+        reached(f.pos.x, f.pos.z, f.where + ' campfire');
+      }
     }
 
     // ---- placements ----
@@ -192,9 +193,19 @@ export function makeAudit(deps) {
       notes.cairnToSummit = +Math.hypot(cp.x - s.x, cp.z - s.z).toFixed(1);
       if (notes.cairnToSummit > 15) fails.push('cairn off the summit');
     } else fails.push('no cairn');
-    const fire = world.campfire.pos;
-    if (Math.hypot(fire.x - s.x, fire.z - s.z) > 15) fails.push('campfire off the summit');
-    if (islandNormal(fire.x, fire.z).y < 0.955) fails.push('campfire on a slope');
+    // two fires: one beside the cairn, one on dry beach sand
+    const top = world.campfire.fire('summit').pos;
+    if (Math.hypot(top.x - s.x, top.z - s.z) > 15) fails.push('summit campfire off the summit');
+    const sand = world.campfire.fire('beach').pos;
+    if (biomeAt(sand.x, sand.z).w.sand < 0.4) fails.push('beach campfire off the sand');
+    // above the highest tide plus the tallest run-up, with room to spare
+    if (sand.y < 1.5) fails.push('beach campfire in the swash');
+    if (Math.hypot(sand.x - s.x, sand.z - s.z) < 40) fails.push('the two campfires are the same camp');
+    for (const f of world.campfire.fires) {
+      if (islandNormal(f.pos.x, f.pos.z).y < 0.955) {
+        fails.push(f.where + ' campfire on a slope');
+      }
+    }
     if (!world.hammock.tryToggle) fails.push('hammock is the no-op stub');
     const wreck = deps.scene.getObjectByName('wreck');
     if (wreck) {

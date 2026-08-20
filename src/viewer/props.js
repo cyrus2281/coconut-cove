@@ -454,7 +454,8 @@ export const PROPS = [
     id: 'campfire', label: 'campfire', section: 'camp', env: 'beach',
     build(rand) {
       reseedWorld(rand);
-      const fire = buildCampfire();
+      // the island lights two of these; the beach one is the diorama's
+      const fire = buildCampfire().fire('beach');
       const state = { anim: 'blazing' };
       return {
         object: sited(fire.group, { x: fire.pos.x, z: fire.pos.z, r: 3.2 }),
@@ -678,7 +679,7 @@ export const PROPS = [
     id: 'volcano', label: 'volcano', section: 'horizon', env: 'beach',
     build(rand) {
       const group = new THREE.Group();
-      const cone = volcanoCone(rand, { shrink: 0.9 + rand() * 0.2 });
+      const cone = volcanoCone(rand, { scale: 0.9 + rand() * 0.2 });
       const mesh = new THREE.Mesh(cone.geo, landformMaterial());
       group.add(mesh);
       const v = { ...cone, phase: rand() * 9 };

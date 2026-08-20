@@ -114,9 +114,11 @@ Everything is generated at startup from seeded noise — geometry, textures
   are, rain overhead. No audio files.
 - **The interior** — every island's heart holds a reed-ringed freshwater
   lagoon (wade in, watch it dimple in the rain), a huge buttress-rooted
-  fig with a rope swing, a shipwreck's ribs cresting a dune, a walker's
-  cairn on the summit, and a driftwood campfire beside it — crackling,
-  throwing embers downwind, beaten down to smoke by every squall.
+  fig with a rope swing, a shipwreck's ribs cresting a dune, and a walker's
+  cairn on the summit. Two driftwood campfires burn — one on the dry sand a
+  short walk down the arrival beach, one beside the cairn at the top of the
+  climb — crackling, throwing embers downwind, beaten down to smoke by every
+  squall. The one you stand at is the one you hear.
 - **Small joys** — butterflies over the day grass and fireflies over the
   night grass; loose coconuts you can punt down the beach and watch the
   surf strand back on the wet sand; a striped hammock between two palms
@@ -170,8 +172,9 @@ the island in isolation, each on a lit stage:
   barrel sponge, anemone, urchin, sea star, seagrass, reef boulder, and a
   giant clam that slams shut on cue.
 - **Water & horizon** — the freshwater pond in its own basin (calm or in the
-  rain), the volcano with its smoke column and night-lit crater, a sister
-  island, and the sloop.
+  rain), the volcano with its smoke column and night-lit crater (five
+  kilometres out, and big enough to look it), a sister island, and the
+  sloop.
 - **Audio** — the one section with nothing to look at: every track the island
   synthesizes, on its own. Nine looping beds (both surf beaches, the shore
   lap, wind, palm rustle, the two halves of the rain, the campfire and the
@@ -209,7 +212,7 @@ __beach.turtle.visit()          // invite the sea turtle ashore right now
 __beach.stampLine()             // lay a test track of footprints into the surge zone
 __beach.pondside()              // stand on the lagoon bank
 __beach.figview()               // face the grandmother fig
-__beach.campview()              // stand by the campfire
+__beach.campview('summit')      // stand by a campfire ('beach' is the default)
 __beach.snorkel()               // float at the surface over a coral garden
 __beach.dive(2)                 // hang mid-water inside the 3rd coral garden
 ```
