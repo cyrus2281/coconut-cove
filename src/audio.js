@@ -185,15 +185,34 @@ export class OceanAudio {
       const swell = Math.pow(s, l.pow || 1);
 
       if (l.kind === 'zone') {
-        const zr = shoreRadius(l.az);
-        const zx = Math.cos(l.az) * zr, zz = Math.sin(l.az) * zr;
+        // the emitter is the nearest point of the surge beach's ARC, not a
+        // single spot — walking the beach keeps the surf beside you — and
+        // the falloff is steep enough that the far shore goes quiet on an
+        // island this size
+        let azE = l.az;
+        if (p) {
+          const pAz = Math.atan2(p.pos.z, p.pos.x);
+          const dAz = Math.atan2(Math.sin(pAz - l.az), Math.cos(pAz - l.az));
+          const w = l.width || 0.55;
+          azE = l.az + Math.max(-w, Math.min(w, dAz));
+        }
+        const zr = shoreRadius(azE);
+        const zx = Math.cos(azE) * zr, zz = Math.sin(azE) * zr;
         const { pan, dist } = this._spatial(zx, zz);
-        const prox = 1 / (1 + Math.max(dist - 10, 0) * 0.05);
+        const prox = 1 / (1 + Math.max(dist - 12, 0) * 0.14);
         l.pan.pan.setTargetAtTime(pan, now, 0.4);
         l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * prox * (1 + 0.5 * storm), now, 0.25);
         l.filter.frequency.setTargetAtTime(l.baseFreq * (0.6 + swell * 1.5), now, 0.3);
       } else if (l.kind === 'lap') {
-        l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * beach, now, 0.3);
+        // near the waterline AND near the shore — a summit at 60m used to
+        // keep a faint shorebreak in its ears
+        let lapK = beach;
+        if (p) {
+          const pAz = Math.atan2(p.pos.z, p.pos.x);
+          const shoreDist = Math.abs(shoreRadius(pAz) - Math.hypot(p.pos.x, p.pos.z));
+          lapK = beach / (1 + Math.max(shoreDist - 8, 0) * 0.05);
+        }
+        l.g.gain.setTargetAtTime((0.05 + swell * l.gainMax) * lapK, now, 0.3);
         l.filter.frequency.setTargetAtTime(l.baseFreq * (0.7 + swell * 1.2), now, 0.3);
       } else if (l.kind === 'wind') {
         // keyed to the actual wind, so a fresh breeze roars under a blue sky
@@ -395,7 +414,9 @@ export class OceanAudio {
   refreshZones() {
     for (const l of this.layers) {
       if (l.kind !== 'zone') continue;
-      l.az = ZONES[l.id === 'surf-a' ? 0 : 1].az;
+      const z = ZONES[l.id === 'surf-a' ? 0 : 1];
+      l.az = z.az;
+      l.width = z.width; // the arc the emitter slides along
     }
   }
 

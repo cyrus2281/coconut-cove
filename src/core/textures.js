@@ -150,6 +150,267 @@ export function sandTextures() {
   };
 }
 
+// ---------------------------------------------------------------- forest floor
+// Humus and leaf litter for the island interior: dark earth with moss
+// blotches, a season's worth of fallen-leaf flecks and a few twigs.
+export function forestFloorTexture() {
+  const S = 512;
+  const rand = mulberry32(61);
+  const macro = noiseField(S, 62, 5, 4);
+  const moss = noiseField(S, 63, 4, 6);
+  const [c, ctx] = makeCanvas(S, S);
+
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < S * S; i++) {
+    const m = macro[i];
+    const g = Math.max(moss[i] - 0.55, 0) * 2.2; // mossy patches
+    img.data[i * 4] = 74 + m * 30 - 15 - g * 22;
+    img.data[i * 4 + 1] = 62 + m * 26 - 13 + g * 26;
+    img.data[i * 4 + 2] = 44 + m * 20 - 10 - g * 10;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // leaf litter: small tinted ellipses, brown through fresh-fallen green
+  const leaves = [
+    ['#7a5a32', 0.5, 2600],
+    ['#5c4526', 0.5, 2200],
+    ['#96703a', 0.42, 1500],
+    ['#4f5b28', 0.4, 900],
+    ['#77803a', 0.35, 600],
+    ['#2e2418', 0.5, 800],
+  ];
+  for (const [col, alpha, count] of leaves) {
+    ctx.fillStyle = col;
+    for (let i = 0; i < count; i++) {
+      ctx.globalAlpha = alpha * (0.5 + rand() * 0.5);
+      ctx.beginPath();
+      ctx.ellipse(rand() * S, rand() * S, 1.2 + rand() * 2.4, 0.8 + rand() * 1.2, rand() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // twigs
+  ctx.strokeStyle = '#3a2c1c';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 140; i++) {
+    ctx.globalAlpha = 0.35 + rand() * 0.3;
+    const x = rand() * S, y = rand() * S, a = rand() * Math.PI, l = 4 + rand() * 10;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- rock
+// Cliff and mountain stone: gray-brown strata bands warped by noise, dark
+// cracks wandering through, pale lichen freckles.
+export function rockTexture() {
+  const S = 512;
+  const rand = mulberry32(66);
+  const macro = noiseField(S, 67, 5, 4);
+  const warp = noiseField(S, 68, 3, 4);
+  const [c, ctx] = makeCanvas(S, S);
+
+  const img = ctx.createImageData(S, S);
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const i = y * S + x;
+      const m = macro[i];
+      // horizontal strata, wobbled so the bands read as bedding planes
+      const band = Math.sin(((y + warp[i] * 150) / S) * Math.PI * 2 * 9);
+      const tone = 134 + m * 44 - 22 + band * 7;
+      img.data[i * 4] = tone;
+      img.data[i * 4 + 1] = tone * 0.94;
+      img.data[i * 4 + 2] = tone * 0.86;
+      img.data[i * 4 + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // cracks: dark random walks, mostly downhill like joints in the face
+  ctx.strokeStyle = '#2c2620';
+  for (let i = 0; i < 110; i++) {
+    ctx.globalAlpha = 0.28 + rand() * 0.3;
+    ctx.lineWidth = 0.7 + rand() * 0.9;
+    let x = rand() * S, y = rand() * S;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    const steps = 4 + Math.floor(rand() * 7);
+    for (let sgm = 0; sgm < steps; sgm++) {
+      x += (rand() - 0.5) * 26;
+      y += 6 + rand() * 22;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // lichen freckles
+  for (let i = 0; i < 900; i++) {
+    ctx.globalAlpha = 0.16 + rand() * 0.2;
+    ctx.fillStyle = rand() < 0.6 ? '#9aa06a' : '#c9c4a4';
+    const s = 1 + rand() * 2;
+    ctx.fillRect(rand() * S, rand() * S, s, s);
+  }
+  ctx.globalAlpha = 1;
+  return track(tex(c));
+}
+
+// ---------------------------------------------------------------- forest flora
+// Kapok bark: pale gray-green, horizontal lenticel dashes, faint thorn studs.
+export function kapokBarkTexture() {
+  const S = 256;
+  const rand = mulberry32(73);
+  const macro = noiseField(S, 74, 4, 4);
+  const [c, ctx] = makeCanvas(S, S);
+  const img = ctx.createImageData(S, S);
+  for (let i = 0; i < S * S; i++) {
+    const m = macro[i];
+    img.data[i * 4] = 104 + m * 28 - 14;
+    img.data[i * 4 + 1] = 104 + m * 28 - 14;
+    img.data[i * 4 + 2] = 90 + m * 24 - 12;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  // lenticels: short horizontal dashes
+  ctx.fillStyle = '#5c5a4c';
+  for (let i = 0; i < 260; i++) {
+    ctx.globalAlpha = 0.25 + rand() * 0.3;
+    ctx.fillRect(rand() * S, rand() * S, 3 + rand() * 6, 1 + rand());
+  }
+  // thorn studs: little pale cones seen head-on
+  for (let i = 0; i < 60; i++) {
+    ctx.globalAlpha = 0.4 + rand() * 0.3;
+    const x = rand() * S, y = rand() * S, r = 1.5 + rand() * 2.2;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, '#d8d4c2');
+    g.addColorStop(1, 'rgba(90,88,74,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  return track(tex(c));
+}
+
+// A broadleaf canopy cluster card (alpha) — bigger, darker leaves than the
+// fig's, for the kapok and almond crowns.
+export function canopyClusterTexture() {
+  const S = 256;
+  const rand = mulberry32(76);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.clearRect(0, 0, S, S);
+  const leaf = (cx, cy, len, wid, ang, shade) => {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(ang);
+    const g = ctx.createLinearGradient(0, -len / 2, 0, len / 2);
+    g.addColorStop(0, `rgb(${14 + shade * 12},${40 + shade * 24},${16 + shade * 10})`);
+    g.addColorStop(1, `rgb(${30 + shade * 16},${66 + shade * 30},${24 + shade * 12})`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(0, -len / 2);
+    ctx.bezierCurveTo(wid, -len * 0.2, wid, len * 0.26, 0, len / 2);
+    ctx.bezierCurveTo(-wid, len * 0.26, -wid, -len * 0.2, 0, -len / 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(160,190,110,${0.3 + shade * 0.25})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(0, -len / 2 + 3); ctx.lineTo(0, len / 2 - 3); ctx.stroke();
+    ctx.restore();
+  };
+  for (let i = 0; i < 46; i++) {
+    const a = rand() * Math.PI * 2;
+    const r = Math.pow(rand(), 0.62) * S * 0.35;
+    leaf(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r,
+      44 + rand() * 52, 13 + rand() * 10, a + Math.PI / 2 + (rand() - 0.5) * 1.2, rand());
+  }
+  return track(tex(c));
+}
+
+// One huge banana/heliconia paddle leaf with a bright midrib, parallel side
+// veins and ragged wind-split edges. Drawn point-up; alpha silhouette.
+export function bananaLeafTexture() {
+  const W = 128, H = 256;
+  const rand = mulberry32(79);
+  const [c, ctx] = makeCanvas(W, H);
+  ctx.clearRect(0, 0, W, H);
+  // paddle silhouette with ragged edge bites
+  ctx.beginPath();
+  ctx.moveTo(W / 2, 4);
+  const edge = (side) => {
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10;
+      const y = 4 + t * (H - 10);
+      const bulge = Math.sin(Math.min(t * 1.25, 1) * Math.PI) * 0.44 + 0.06;
+      let x = W / 2 + side * bulge * W;
+      if (rand() < 0.4 && t > 0.15 && t < 0.95) x -= side * rand() * 14; // wind split
+      ctx.lineTo(x, y);
+    }
+  };
+  edge(1);
+  ctx.lineTo(W / 2, H - 2);
+  edge(-1);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#2e5c1e');
+  g.addColorStop(0.55, '#3f7a26');
+  g.addColorStop(1, '#57923a');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  // parallel side veins
+  ctx.strokeStyle = 'rgba(210,235,150,0.28)';
+  ctx.lineWidth = 1.4;
+  for (let i = 0; i < 26; i++) {
+    const y = 10 + (i / 26) * (H - 20);
+    ctx.beginPath();
+    ctx.moveTo(W / 2, y);
+    ctx.lineTo(W / 2 + W * 0.52, y + 16);
+    ctx.moveTo(W / 2, y);
+    ctx.lineTo(W / 2 - W * 0.52, y + 16);
+    ctx.stroke();
+  }
+  ctx.restore();
+  // midrib
+  ctx.strokeStyle = 'rgba(226,240,160,0.85)';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(W / 2, 4); ctx.lineTo(W / 2, H - 4); ctx.stroke();
+  return track(tex(c));
+}
+
+// A rounded taro/philodendron paddle with an alpha silhouette.
+export function bigLeafTexture() {
+  const S = 128;
+  const rand = mulberry32(82);
+  const [c, ctx] = makeCanvas(S, S);
+  ctx.clearRect(0, 0, S, S);
+  ctx.beginPath();
+  // heart-ish paddle: two lobes at the top, tapering to a point below
+  ctx.moveTo(S / 2, S * 0.96);
+  ctx.bezierCurveTo(S * 0.06, S * 0.62, S * 0.08, S * 0.10, S * 0.5, S * 0.16);
+  ctx.bezierCurveTo(S * 0.92, S * 0.10, S * 0.94, S * 0.62, S / 2, S * 0.96);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, 0, S);
+  g.addColorStop(0, '#2a5a22');
+  g.addColorStop(1, '#48822f');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(200,230,150,0.4)';
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 7; i++) {
+    const t = (i + 1) / 8;
+    ctx.beginPath();
+    ctx.moveTo(S / 2, S * 0.9);
+    ctx.quadraticCurveTo(S / 2 + (t - 0.5) * S * 0.9, S * 0.5, S / 2 + (t - 0.5) * S * 0.86, S * 0.18);
+    ctx.stroke();
+  }
+  ctx.restore();
+  return track(tex(c));
+}
+
 // ---------------------------------------------------------------- footprints
 // Track decal atlas, three cells side by side: bare foot | crab stitches |
 // turtle crawl. R-channel mask + a normal map with pressed-in marks and a

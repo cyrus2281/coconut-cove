@@ -1,8 +1,10 @@
 # 🌴 Coconut Cove
 
-A tiny tropical island you can walk around in the browser — **100% procedurally
+A tropical island you can walk around in the browser — **100% procedurally
 generated**, no downloaded assets. Built with [Three.js](https://threejs.org)
-and Vite.
+and Vite. Sandy coves give way to a dense jungle interior, rolling hills,
+sea-cliff headlands and real mountains, with a ~1 km seeded footpath
+switchbacking to a summit campsite.
 
 Created by [Cyrus Mobini](https://github.com/cyrus2281) ·
 [github.com/cyrus2281/coconut-cove](https://github.com/cyrus2281/coconut-cove)
@@ -35,16 +37,30 @@ favorite with `http://localhost:5173/?seed=12345`.
 | `E` | lie back in the hammock, again to sleep (any move key gets you up) |
 | `R` | grow a brand-new island (same as the ⟳ button, seed lands in the URL) |
 | `M` | toggle ocean sound |
-| touch | 📱 button on the title screen: on-screen joystick + JUMP, drag the world to look (auto-enables on first touch) |
+| touch | 📱 on-screen joystick + JUMP + a latching RUN toggle, drag the world to look (auto-enables on first touch) |
 
 ## What's inside
 
 Everything is generated at startup from seeded noise — geometry, textures
 (painted on `<canvas>`), and audio (Web Audio filtered-noise surf):
 
-- **Island** — analytic height field (lobed shoreline, dunes, turquoise
-  shelf, drop-off) shared by the terrain mesh, the player physics, prop
-  placement, and a baked heightmap the water shader reads.
+- **Island** — one analytic height field (lobed ~250 m shoreline, sandy
+  beach aprons, rolling hills, 2-3 seeded mountains with a flat summit
+  shelf, sea-cliff coast arcs, turquoise shelf, drop-off) shared by the
+  chunked terrain mesh, the player physics, prop placement, and baked
+  height + biome maps the water and ground shaders read.
+- **Forest** — ~2100 instanced plants: kapok giants and pagoda-tiered
+  tropical almonds over banana clumps, tree ferns and big-leaf shrubs,
+  placed by biome with seeded clearings; the understory melts away with
+  distance so phones stay afloat.
+- **Trail** — a seeded, grade-relaxed footpath (≤16° profile) from the
+  spawn beach through the forest, past the pond, up onto a clifftop
+  lookout and switchbacking to the summit, carved into the terrain and
+  painted as a dirt ribbon. Every island's route is audited walkable
+  (`__beach.audit()`).
+- **Mountains & slopes** — climbing slows past 20° and stalls past 50°;
+  near-vertical ground sheds you downhill, so cliffs are real barriers
+  and the trail is the way up.
 - **Ocean** — custom shader: 4 Gerstner swell components that flatten in the
   shallows, depth-based turquoise→navy color, shoreline foam collar, rolling
   wave-front foam, rare whitecaps, sun glitter, analytic sky reflection,

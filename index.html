@@ -154,6 +154,24 @@
     }
     #touchui.swimming #diveBtn { display: block; }
     #diveBtn.pressed { background: rgba(255, 255, 255, 0.38); }
+    /* sprint toggle: tap to latch, tap to walk again */
+    #runBtn {
+      position: absolute;
+      left: calc(46px + env(safe-area-inset-left));
+      bottom: calc(178px + env(safe-area-inset-bottom));
+      width: 68px; height: 68px; border-radius: 50%;
+      font-size: 13px; letter-spacing: 0.12em;
+      font-family: ui-monospace, Menlo, monospace;
+      color: #fff; border: 2px solid rgba(255, 255, 255, 0.4);
+      background: rgba(10, 25, 35, 0.32);
+      backdrop-filter: blur(4px);
+      pointer-events: auto; touch-action: none;
+      -webkit-user-select: none; user-select: none;
+    }
+    #runBtn.latched {
+      background: rgba(255, 255, 255, 0.42);
+      border-color: rgba(255, 255, 255, 0.75);
+    }
     #controls {
       display: flex; gap: 22px; flex-wrap: wrap; justify-content: center;
       font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
@@ -283,6 +301,7 @@
     <div id="joy"><div id="knob"></div></div>
     <button id="diveBtn">DIVE</button>
     <button id="jumpBtn">JUMP</button>
+    <button id="runBtn">RUN</button>
   </div>
 
   <script type="module" src="/src/main.js"></script>

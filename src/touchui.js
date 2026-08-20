@@ -10,6 +10,7 @@ export function buildTouchUI(player) {
   const knob = document.getElementById('knob');
   const jump = document.getElementById('jumpBtn');
   const dive = document.getElementById('diveBtn');
+  const run = document.getElementById('runBtn');
   const TRAVEL = 46; // knob travel radius in px
 
   function setKnob(dx, dy) {
@@ -101,7 +102,21 @@ export function buildTouchUI(player) {
   dive.addEventListener('mousedown', divePress);
   window.addEventListener('mouseup', diveUnpress);
 
-  // in the water the jump thumb becomes the float thumb
+  // --- run toggle (holding a third control while thumb-looking is a
+  // finger too many, so a tap latches the sprint on or off) ---
+  const setRun = (on) => {
+    player.touchRun = on;
+    run.classList.toggle('latched', on);
+  };
+  const runTap = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    setRun(!player.touchRun);
+  };
+  run.addEventListener('touchstart', runTap, { passive: false });
+  run.addEventListener('mousedown', runTap);
+
+  // in the water the jump thumb becomes the float thumb (and the sprint
+  // latch resets — swim pace is its own decision)
   let wasSwimming = false;
   function setSwimming(s) {
     if (s === wasSwimming) return;
@@ -109,6 +124,7 @@ export function buildTouchUI(player) {
     root.classList.toggle('swimming', s);
     jump.textContent = s ? 'FLOAT' : 'JUMP';
     if (!s) diveUnpress();
+    setRun(false);
   }
 
   return {
@@ -121,6 +137,7 @@ export function buildTouchUI(player) {
       root.classList.add('hidden');
       document.body.classList.remove('touch-ui');
       release();
+      setRun(false);
     },
     get active() { return !root.classList.contains('hidden'); },
   };

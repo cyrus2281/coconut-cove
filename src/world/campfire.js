@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, islandNormal, lagoonFreeboard } from './island.js';
+import { islandHeight, islandNormal, lagoonFreeboard, summitPos } from './island.js';
 import { figBase } from './fig.js';
 import { cairnPos } from './scatter.js';
 import { foamTexture, cloudTexture, barkTexture } from '../core/textures.js';
@@ -71,18 +71,19 @@ export function buildCampfire() {
     break;
   }
   if (!site) {
-    // no cairn or no flat ground beside it: tuck in wherever is high and dry
+    // no cairn or no flat ground beside it: camp on the summit shelf —
+    // it's guaranteed level, and the fire belongs at the top of the climb
+    const s = summitPos();
     for (let tries = 0; tries < 120 && !site; tries++) {
-      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 12;
-      const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      const a = rand() * Math.PI * 2, rr = 1.5 + Math.sqrt(rand()) * 5;
+      const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
       if (fb && Math.hypot(x - fb.x, z - fb.z) < 7) continue;
       if (lagoonFreeboard(x, z) < 1.0) continue;
-      if (islandHeight(x, z) < 3.4) continue;
       if (islandNormal(x, z).y < 0.96) continue;
       site = { x, z, h: islandHeight(x, z) };
     }
+    if (!site) site = { x: s.x + 3, z: s.z, h: islandHeight(s.x + 3, s.z) };
   }
-  if (!site) site = { x: 0, z: 6, h: islandHeight(0, 6) };
 
   const S = new THREE.Vector3(site.x, site.h, site.z);
 

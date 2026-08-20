@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, shoreRadius, cayCenter } from './island.js';
+import { islandHeight, shoreRadius, cayCenter, isSandyShore, shoreRange } from './island.js';
 import { buildGull, gullAssets } from '../creatures/gull.js';
 
 const WALK_SPEED = 0.30;   // m/s: an unhurried potter along the sand
@@ -24,13 +24,14 @@ export function buildBirds(player, audio) {
   const gulls = [];
   const kit = gullAssets();   // textures and geometry, shared by the flock
   const N = 2 + Math.floor(rand() * 4); // 2-5 gulls, the seed decides
+  const meanShore = (shoreRange().min + shoreRange().max) / 2;
   for (let i = 0; i < N; i++) {
     const parts = buildGull(kit, rand);
     group.add(parts.group);
     gulls.push({
       ...parts,
-      r: 34 + rand() * 55,
-      h: 22 + rand() * 22,
+      r: (0.35 + rand() * 0.75) * meanShore,
+      h: 24 + rand() * 26,
       speed: (0.05 + rand() * 0.035) * (rand() < 0.5 ? 1 : -1),
       a: rand() * Math.PI * 2,
       glideSeed: rand() * 100,
@@ -63,6 +64,7 @@ export function buildBirds(player, audio) {
         x = c.x + Math.cos(a) * rr; z = c.z + Math.sin(a) * rr;
       } else {
         const az = rand() * Math.PI * 2;
+        if (!isSandyShore(az)) continue; // gulls loaf on sand, not cliff toes
         const r = shoreRadius(az) - 1 - rand() * 7;
         x = Math.cos(az) * r; z = Math.sin(az) * r;
       }
@@ -91,7 +93,8 @@ export function buildBirds(player, audio) {
         const x = Math.cos(b.a) * b.r;
         const z = Math.sin(b.a) * b.r;
         const y = b.h + Math.sin(t * 0.3 + b.glideSeed) * 3;
-        b.pos.set(x, y, z);
+        // an orbit that crosses the mountains rides up over them
+        b.pos.set(x, Math.max(y, islandHeight(x, z) + 10), z);
         b.cryT -= dt;
         if (b.cryT <= 0) {
           b.cryT = 16 + rand() * 32;
@@ -133,7 +136,8 @@ export function buildBirds(player, audio) {
         const a2y = THREE.MathUtils.lerp(b.ctrl.y, b.target.y + b.standY, s);
         const a2z = THREE.MathUtils.lerp(b.ctrl.z, b.target.z, s);
         const nx = THREE.MathUtils.lerp(a1x, a2x, s);
-        const ny = THREE.MathUtils.lerp(a1y, a2y, s);
+        // the glide path never clips a dune or ridge on the way in
+        const ny = Math.max(THREE.MathUtils.lerp(a1y, a2y, s), islandHeight(nx, THREE.MathUtils.lerp(a1z, a2z, s)) + 0.2);
         const nz = THREE.MathUtils.lerp(a1z, a2z, s);
         const dx = nx - b.pos.x, dz = nz - b.pos.z;
         if (dx * dx + dz * dz > 1e-8) b.yaw = Math.atan2(dx, dz);
@@ -216,8 +220,8 @@ export function buildBirds(player, audio) {
         const a2y = THREE.MathUtils.lerp(b.ctrl.y, b.target.y, k);
         const a2z = THREE.MathUtils.lerp(b.ctrl.z, b.target.z, k);
         const nx = THREE.MathUtils.lerp(a1x, a2x, k);
-        const ny = THREE.MathUtils.lerp(a1y, a2y, k);
         const nz = THREE.MathUtils.lerp(a1z, a2z, k);
+        const ny = Math.max(THREE.MathUtils.lerp(a1y, a2y, k), islandHeight(nx, nz) + 0.4);
         const dx = nx - b.pos.x, dz = nz - b.pos.z;
         if (dx * dx + dz * dz > 1e-8) b.yaw = Math.atan2(dx, dz);
         b.pos.set(nx, ny, nz);
@@ -228,8 +232,8 @@ export function buildBirds(player, audio) {
         if (b.stateT <= 0) {
           b.state = 'soar';
           b.a = Math.atan2(b.pos.z, b.pos.x);
-          b.r = THREE.MathUtils.clamp(Math.hypot(b.pos.x, b.pos.z), 34, 89);
-          b.h = Math.max(b.pos.y, 20);
+          b.r = THREE.MathUtils.clamp(Math.hypot(b.pos.x, b.pos.z), meanShore * 0.3, meanShore * 1.1);
+          b.h = Math.max(b.pos.y, 24);
           b.stateT = 20 + rand() * 40;
         }
       }

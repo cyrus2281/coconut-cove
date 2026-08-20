@@ -7,7 +7,9 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
-import { islandHeight, islandNormal, lagoonInfo, lagoonFreeboard } from './island.js';
+import {
+  islandHeight, islandNormal, lagoonInfo, lagoonFreeboard, biomeAt, shoreRange, trailQuery,
+} from './island.js';
 import { figBarkTexture, leafClusterTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
 
@@ -94,28 +96,41 @@ export function buildFig() {
   const L = lagoonInfo();
   let base = null;
   if (L) {
-    for (let attempt = 0; attempt < 24; attempt++) {
+    let bestBank = null, bankScore = -Infinity;
+    for (let attempt = 0; attempt < 48; attempt++) {
       const a = rand() * Math.PI * 2;
       const d = L.rOuter + 2.5 + rand() * 3;
       const x = L.x + Math.cos(a) * d, z = L.z + Math.sin(a) * d;
       const h = islandHeight(x, z);
       if (h < 2.7) continue;
       if (lagoonFreeboard(x, z) < 0.55) continue;
-      if (islandNormal(x, z).y < 0.94) continue; // no steep bank
-      base = new THREE.Vector3(x, h - 0.12, z);   // roots just bedded
-      break;
+      const tq = trailQuery(x, z);
+      if (tq && tq.d < 6) continue; // her glade, not the path's shoulder
+      const nY = islandNormal(x, z).y;
+      if (nY > bankScore) { bankScore = nY; bestBank = new THREE.Vector3(x, h - 0.12, z); }
+      if (nY >= 0.94) break; // level enough — done looking
     }
+    if (bankScore >= 0.88) base = bestBank; // keep-best: a slightly steeper bank beats exile
   }
   if (!base) {
-    // no lagoon bank worked — take the island's summit area instead
-    let bx = 0, bz = 6, bh = -1;
-    for (let i = 0; i < 160; i++) {
-      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 12;
+    // no lagoon bank worked — the grandmother lives deep in the forest
+    // instead (the old fallback climbed a 12m disc at the world origin,
+    // which is a mountain flank now)
+    const R = shoreRange().min;
+    let bx = 0, bz = 0, bScore = -Infinity;
+    for (let i = 0; i < 240; i++) {
+      const a = rand() * Math.PI * 2;
+      const rr = (0.25 + rand() * 0.45) * R;
       const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
-      const h = islandHeight(x, z);
-      if (h > bh) { bh = h; bx = x; bz = z; }
+      const bio = biomeAt(x, z);
+      const tq = trailQuery(x, z);
+      const score = bio.w.forest
+        - (tq && tq.d < 6 ? 2 : 0)
+        - (lagoonFreeboard(x, z) < 0.55 ? 4 : 0)
+        - Math.max(0.94 - bio.slopeY, 0) * 3;
+      if (score > bScore) { bScore = score; bx = x; bz = z; }
     }
-    base = new THREE.Vector3(bx, bh - 0.25, bz);
+    base = new THREE.Vector3(bx, islandHeight(bx, bz) - 0.25, bz);
   }
 
   const bark = new MeshData();

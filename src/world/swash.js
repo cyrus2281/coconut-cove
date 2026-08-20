@@ -53,13 +53,20 @@ export const swashUniforms = {
 };
 
 // regrow the surge zones for the current master seed (mutates ZONES in
-// place and refreshes the shared uniforms, so every material follows)
-export function reseedSwash() {
+// place and refreshes the shared uniforms, so every material follows).
+// pickAz(rand, index, width, prevAz), when given, chooses each zone's
+// bearing — main.js injects a picker that keeps the surge beaches inside
+// the island's sandy coast sectors. (swash must not import island.js:
+// island.js already imports this module, and the module-load call below
+// would then run against a half-initialized island.)
+export function reseedSwash(pickAz) {
   const r = mulberry32(subSeed('swash'));
-  const az1 = r() * Math.PI * 2;
-  const az2 = (az1 + 2.2 + r() * 1.8) % (Math.PI * 2);
-  ZONES[0] = { az: az1, width: 0.5 + r() * 0.2, height: 0.75 + r() * 0.2, period: 12 + r() * 2, phase: 0 };
-  ZONES[1] = { az: az2, width: 0.4 + r() * 0.18, height: 0.55 + r() * 0.15, period: 16 + r() * 2.5, phase: r() * 8 };
+  const w1 = 0.5 + r() * 0.2;
+  const az1 = pickAz ? pickAz(r, 0, w1, null) : r() * Math.PI * 2;
+  const w2 = 0.4 + r() * 0.18;
+  const az2 = pickAz ? pickAz(r, 1, w2, az1) : (az1 + 2.2 + r() * 1.8) % (Math.PI * 2);
+  ZONES[0] = { az: az1, width: w1, height: 0.75 + r() * 0.2, period: 12 + r() * 2, phase: 0 };
+  ZONES[1] = { az: az2, width: w2, height: 0.55 + r() * 0.15, period: 16 + r() * 2.5, phase: r() * 8 };
   swashUniforms.uZone1.value.set(ZONES[0].az, ZONES[0].width, ZONES[0].height, ZONES[0].period);
   swashUniforms.uZone1Ph.value = ZONES[0].phase;
   swashUniforms.uZone2.value.set(ZONES[1].az, ZONES[1].width, ZONES[1].height, ZONES[1].period);

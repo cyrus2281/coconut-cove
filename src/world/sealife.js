@@ -444,7 +444,9 @@ function makeRays(rand, meadows) {
       const h = islandHeight(x, z);
       if (h < -0.9 && h > -5) return { x, z };
     }
-    return { x: meadows[0]?.x ?? 40, z: meadows[0]?.z ?? 0 };
+    // shore-derived fallback — a coordinate literal from the 47m island
+    // would sit on dry land now
+    return { x: meadows[0]?.x ?? shoreRadius(0) + 15, z: meadows[0]?.z ?? 0 };
   };
 
   const deeper = new THREE.Vector2();
@@ -541,7 +543,7 @@ function makeTurtles(rand) {
       const h = islandHeight(x, z);
       if (h < -1.4 && h > -7.5) return { x, z };
     }
-    return { x: 60, z: 0 };
+    return { x: shoreRadius(0) + 20, z: 0 }; // shore-derived, never a land literal
   };
 
   const _box = new THREE.Box3();

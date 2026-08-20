@@ -6,7 +6,7 @@
 // edge of the cove so you can't swim out to sea.
 
 import * as THREE from 'three';
-import { islandHeight, shoreRadius, waterLevelAt } from './world/island.js';
+import { islandHeight, shoreRadius, waterLevelAt, biomeAt } from './world/island.js';
 import { runupNow, runupVel, ZONES } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
@@ -111,6 +111,7 @@ export class Player {
     this.touchMove = new THREE.Vector2();
     this.touchJump = false;
     this.touchDive = false;
+    this.touchRun = false; // latched by the on-screen RUN toggle
     const looks = new Map();
     dom.addEventListener('touchstart', (e) => {
       for (const t of e.changedTouches) {
@@ -199,7 +200,7 @@ export class Player {
       if (k.has('KeyC') || k.has('ControlLeft') || this.touchDive) kick -= 1;
     } else { fwd = 0; strafe = 0; }
 
-    const fast = k.has('ShiftLeft') || k.has('ShiftRight');
+    const fast = k.has('ShiftLeft') || k.has('ShiftRight') || this.touchRun;
     const spd = fast ? SWIM_FAST : SWIM;
 
     // forward follows your gaze once your eyes are under (that's the dive);
@@ -288,12 +289,24 @@ export class Player {
     strafe += this.touchMove.x;
     if (!this.enabled) { fwd = 0; strafe = 0; }
 
-    const running = k.has('ShiftLeft') || k.has('ShiftRight');
+    const running = k.has('ShiftLeft') || k.has('ShiftRight') || this.touchRun;
     const target = running ? RUN : WALK;
 
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
     const dir = new THREE.Vector3(-sy * fwd + cy * strafe, 0, -cy * fwd - sy * strafe);
     if (dir.lengthSq() > 1) dir.normalize();
+
+    // the mountains are real: climbing slows past ~20° and stalls past ~50°.
+    // Only the uphill component is taxed — downhill and contouring stay at
+    // full speed, so a slope can never trap you (jump remains the escape
+    // hatch for small pockets).
+    let climbK = 1;
+    const dl = dir.length();
+    if (dl > 1e-4) {
+      const px = dir.x / dl, pz = dir.z / dl;
+      const grade = (islandHeight(this.pos.x + px * 0.7, this.pos.z + pz * 0.7) - ground) / 0.7;
+      if (grade > 0.36) climbK = 1 - THREE.MathUtils.smoothstep(grade, 0.36, 1.19);
+    }
 
     // wading drag. `tide` is the sea (the swash model below is a sea thing);
     // `water` is whatever stands underfoot, so the lagoon wades like the sea.
@@ -321,8 +334,8 @@ export class Player {
 
     // horizontal velocity with pleasant accel/decel
     const accel = this.grounded ? 34 : 8;
-    this.vel.x += (dir.x * target * drag + driftX - this.vel.x) * Math.min(accel * dt, 1);
-    this.vel.z += (dir.z * target * drag + driftZ - this.vel.z) * Math.min(accel * dt, 1);
+    this.vel.x += (dir.x * target * drag * climbK + driftX - this.vel.x) * Math.min(accel * dt, 1);
+    this.vel.z += (dir.z * target * drag * climbK + driftZ - this.vel.z) * Math.min(accel * dt, 1);
 
     // gravity + jump
     this.vel.y -= GRAVITY * dt;
@@ -356,6 +369,19 @@ export class Player {
       this.grounded = false;
     }
 
+    // standing on a near-vertical face (a cliff lip, a mountain wall): the
+    // ground sheds you downhill until you're back under ~50°
+    if (this.grounded) {
+      const gx = islandHeight(this.pos.x + 0.5, this.pos.z) - islandHeight(this.pos.x - 0.5, this.pos.z);
+      const gz = islandHeight(this.pos.x, this.pos.z + 0.5) - islandHeight(this.pos.x, this.pos.z - 0.5);
+      const steep = Math.hypot(gx, gz); // rise over the 1m probe baseline
+      if (steep > 1.19) {
+        const push = Math.min((steep - 1.19) * 8, 10);
+        this.vel.x -= (gx / steep) * push * dt;
+        this.vel.z -= (gz / steep) * push * dt;
+      }
+    }
+
     // footprints: stamp alternating feet along the direction of travel
     const speed0 = Math.hypot(this.vel.x, this.vel.z);
     if (this.grounded && speed0 > 0.6) {
@@ -369,7 +395,11 @@ export class Player {
         const fx = this.pos.x - mx * 0.24 - mz * lat;
         const fz = this.pos.z - mz * 0.24 + mx * lat;
         const fh = islandHeight(fx, fz);
-        if (this.onStep && fh > waterLevelAt(fx, fz) - 0.06) {
+        // prints press into sand and trail dirt; forest litter and bare
+        // rock don't take them
+        const bio = biomeAt(fx, fz, { h: fh });
+        if (this.onStep && fh > waterLevelAt(fx, fz) - 0.06
+          && bio.w.sand + bio.w.trail > 0.45) {
           this.onStep(fx, fz, fh, mx, mz, this.stepSide);
         }
       }

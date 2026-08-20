@@ -8,7 +8,9 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
 import { subSeed } from '../core/seed.js';
-import { islandHeight, shoreRadius, lagoonFreeboard } from './island.js';
+import {
+  islandHeight, shoreRadius, lagoonFreeboard, isSandyShore, beachAz, trailQuery,
+} from './island.js';
 import { ZONES } from './swash.js';
 import { barkTexture, leafletTexture, huskTexture } from '../core/textures.js';
 
@@ -319,33 +321,38 @@ export function buildPalms() {
   const rand = mulberry32(subSeed('palms'));
 
   // grow the grove from the seed: a hero palm leaning out over the water by
-  // the spawn (surge) beach, a cluster beside it, a pair across the island,
-  // and a loner on the dunes
+  // the spawn (surge) beach, a cluster beside it, a pair down the shore,
+  // and a loner on the dunes. Offsets are in meters of coastline (the old
+  // radian offsets were tuned to a 47m island; at this scale they'd be a
+  // hundred meters of beach), and every anchor that drifts onto a cliff
+  // sector redraws itself onto sand.
+  const along = (az, meters) => az + meters / shoreRadius(az);
+  const sandyOr = (az) => (isSandyShore(az) ? az : beachAz(rand, { margin: 0.15 }));
   const heroAz = ZONES[0].az + 0.08;
   const spots = [
     { az: heroAz, d: -3.2, height: 6.8 + rand() * 1.6, lean: 2.9 + rand() * 0.8, leanOut: true },
   ];
-  const clusterAz = heroAz - 0.35 - rand() * 0.35;
+  const clusterAz = sandyOr(along(heroAz, -(14 + rand() * 10)));
   const nCluster = 3 + (rand() < 0.4 ? 1 : 0);
   for (let i = 0; i < nCluster; i++) {
     spots.push({
-      az: clusterAz + (rand() - 0.5) * 0.45,
+      az: along(clusterAz, (rand() - 0.5) * 20),
       d: -(8 + rand() * 9),
       height: 5.6 + rand() * 3.2,
       lean: 0.5 + rand() * 0.9,
     });
   }
-  const pairAz = heroAz + 0.9 + rand() * 1.6;
+  const pairAz = sandyOr(along(heroAz, 40 + rand() * 45));
   for (let i = 0; i < 2; i++) {
     spots.push({
-      az: pairAz + i * (0.2 + rand() * 0.12),
+      az: along(pairAz, i * (9 + rand() * 5)),
       d: -(9 + rand() * 6),
       height: 5.8 + rand() * 3.1,
       lean: 0.9 + rand() * 0.7,
     });
   }
   spots.push({
-    az: pairAz + 1.5 + rand() * 1.2,
+    az: sandyOr(along(pairAz, 28 + rand() * 20)),
     d: -(16 + rand() * 5),
     height: 6.4 + rand() * 1.4,
     lean: 0.4 + rand() * 0.4,
@@ -353,32 +360,40 @@ export function buildPalms() {
 
   // a matched pair ~4.2m apart on its own stretch of beach: every island
   // gets somewhere to sling the hammock
+  const hamPair = [];
   {
-    const hamAz = pairAz + 2.3 + rand() * 1.1;
+    const hamAz = sandyOr(along(pairAz, 60 + rand() * 50));
     const hamD = -(5.5 + rand() * 2);
     const hamR = Math.max(shoreRadius(hamAz) + hamD, 18);
     const half = 2.1 / hamR; // ~4.2m along the shore between the two trunks
     for (const s of [-1, 1]) {
-      spots.push({
+      const spot = {
         az: hamAz + half * s,
         d: hamD,
         height: 5.9 + rand() * 1.6,
         lean: 0.45 + rand() * 0.5,
-      });
+        pair: hamPair,
+      };
+      hamPair.push(spot);
+      spots.push(spot);
     }
   }
 
-  const trees = [];
-  for (let i = 0; i < spots.length; i++) {
-    const s = spots[i];
-    let r = shoreRadius(s.az) + s.d;
-    // an inland spot can land in the lagoon — walk it back toward the beach
-    // until the trunk stands on dry ground
+  // walk a spot out of a pond or off the footpath, toward the beach
+  const walkBack = (az, r0) => {
+    let r = r0;
     for (let g = 0; g < 12; g++) {
-      if (lagoonFreeboard(Math.cos(s.az) * r, Math.sin(s.az) * r) >= 0.7) break;
+      const x = Math.cos(az) * r, z = Math.sin(az) * r;
+      const tq = trailQuery(x, z);
+      if (lagoonFreeboard(x, z) >= 0.7 && (!tq || tq.d > 2.5)) break;
       r += 2.0;
     }
-    const x = Math.cos(s.az) * r, z = Math.sin(s.az) * r;
+    return r;
+  };
+
+  const trees = [];
+  const buildSpot = (s, i) => {
+    const x = Math.cos(s.az) * s.r, z = Math.sin(s.az) * s.r;
     const leanA = s.leanOut
       ? Math.atan2(Math.sin(s.az), Math.cos(s.az))
       : rand() * Math.PI * 2;
@@ -387,7 +402,20 @@ export function buildPalms() {
     trees.push(buildPalm(bark, leaf, husk, {
       x, z, height: s.height, leanDir, leanAmount: s.lean, seed: subSeed('palm' + i),
     }));
+  };
+  for (const s of spots) {
+    if (s.pair) continue; // the hammock pair moves as one, below
+    s.r = walkBack(s.az, shoreRadius(s.az) + s.d);
   }
+  // pair-aware walk-back: nudge both hammock trunks by the same amount so
+  // their 4.2m spacing (the hammock guarantee) survives any pond dodge
+  {
+    const midAz = (hamPair[0].az + hamPair[1].az) / 2;
+    const r0 = shoreRadius(midAz) + hamPair[0].d;
+    const dr = walkBack(midAz, r0) - r0;
+    for (const s of hamPair) s.r = shoreRadius(s.az) + s.d + dr;
+  }
+  for (let i = 0; i < spots.length; i++) buildSpot(spots[i], i);
 
   // fallen dead fronds on the sand
   for (let i = 0; i < 3; i++) {
@@ -404,6 +432,32 @@ export function buildPalms() {
       droopRate: 0.5, flexBase: 0.02, phase: 0, dead: true,
       floor: (fx, fz) => islandHeight(fx, fz) + 0.02,
     });
+  }
+
+  // extra clusters strewn along the other sandy stretches — six times the
+  // coastline deserves more than one grove (own stream, so the original
+  // grove's draws stay untouched)
+  {
+    const xr = mulberry32(subSeed('palmsExtra'));
+    const nExtra = 2 + (xr() < 0.5 ? 1 : 0);
+    const anchors = [ZONES[0].az];
+    for (let c = 0; c < nExtra; c++) {
+      const az0 = beachAz(xr, { avoid: anchors, sep: 0.5, margin: 0.15 });
+      anchors.push(az0);
+      const n = 2 + (xr() < 0.5 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        const az = along(az0, (xr() - 0.5) * 24);
+        const r = walkBack(az, shoreRadius(az) - (5 + xr() * 12));
+        const leanA = xr() * Math.PI * 2;
+        trees.push(buildPalm(bark, leaf, husk, {
+          x: Math.cos(az) * r, z: Math.sin(az) * r,
+          height: 5.4 + xr() * 3.4,
+          leanDir: new THREE.Vector2(Math.cos(leanA), Math.sin(leanA)),
+          leanAmount: 0.4 + xr() * 1.0,
+          seed: subSeed('palm' + trees.length),
+        }));
+      }
+    }
   }
 
   // (No baked fallen coconuts here: every nut on the ground is a live

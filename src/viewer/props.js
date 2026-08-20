@@ -16,6 +16,7 @@ import {
 import { uwPatch } from '../world/underwater.js';
 import { MeshData, buildPalm, buildFrond, palmMaterials } from '../world/palms.js';
 import { buildFig } from '../world/fig.js';
+import { buildForestPlant } from '../world/forest.js';
 import { nutMesh } from '../world/coconuts.js';
 import { hammockRig } from '../world/hammock.js';
 import { buildCampfire } from '../world/campfire.js';
@@ -268,6 +269,23 @@ export const PROPS = [
       floor: false,
     };
   }),
+
+  // ------------------------------------------------------------ forest
+  windEntry('kapok', 'kapok tree', 'forest', (rand) => ({
+    object: buildForestPlant('kapok', rand),
+  })),
+  windEntry('almond', 'tropical almond', 'forest', (rand) => ({
+    object: buildForestPlant('almond', rand),
+  })),
+  windEntry('banana', 'banana clump', 'forest', (rand) => ({
+    object: buildForestPlant('banana', rand),
+  })),
+  windEntry('fern', 'tree fern', 'forest', (rand) => ({
+    object: buildForestPlant('fern', rand),
+  })),
+  windEntry('bigleaf', 'big-leaf shrub', 'forest', (rand) => ({
+    object: buildForestPlant('shrub', rand),
+  })),
 
   // ------------------------------------------------------------ undergrowth
   windEntry('duneGrass', 'dune grass', 'undergrowth', (rand) => {

@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { uniforms } from '../core/env.js';
 
-const LAP_RADIUS = 640;
+const LAP_RADIUS = 780; // clear of the biggest island's shore + swim limit
 const LAP_SECONDS = 420;
 
 function sailGeometry(pts) {

@@ -10,10 +10,10 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, shoreRadius, lagoonsInfo } from './island.js';
+import { islandHeight, shoreRadius, lagoonsInfo, biomeAt } from './island.js';
 import { glowDotTexture } from '../core/textures.js';
 
-const COUNT = 40;
+const COUNT = 64;
 
 export function buildFireflies(player) {
   const group = new THREE.Group();
@@ -37,7 +37,9 @@ export function buildFireflies(player) {
       const rr = Math.sqrt(rand()) * (shoreRadius(a) - 8);
       x = Math.cos(a) * rr;
       z = Math.sin(a) * rr;
-      if (islandHeight(x, z) < 2.3) continue; // grass country only
+      const bio = biomeAt(x, z);
+      // forest floor and meadow country only — not bare rock or beach
+      if (bio.w.forest < 0.25 && bio.kind !== 'meadow') continue;
     }
     const ground = Math.max(islandHeight(x, z), L ? L.level : -99); // hover over pond water, not its bed
     // lantern hue: amber through yellow-green, one fly one color

@@ -11,10 +11,10 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, lagoonFreeboard } from './island.js';
+import { islandHeight, lagoonFreeboard, biomeAt, shoreRange } from './island.js';
 import { buildButterflyWings, BUTTERFLY_TINTS } from '../creatures/butterfly.js';
 
-const COUNT = 6; // a few is plenty — a swarm reads as gnats, not butterflies
+const COUNT = 10; // a few is plenty — a swarm reads as gnats, not butterflies
 
 export function buildButterflies(player) {
   const group = new THREE.Group();
@@ -32,11 +32,13 @@ export function buildButterflies(player) {
   // ---- the flies ----
   const flies = [];
   let guard = 0;
+  const roamR = shoreRange().min * 0.75;
   while (flies.length < COUNT && guard++ < 2000) {
     const a = rand() * Math.PI * 2;
-    const rr = Math.sqrt(rand()) * 22;
+    const rr = Math.sqrt(rand()) * roamR;
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
-    if (islandHeight(x, z) < 2.3) continue;
+    const bio = biomeAt(x, z);
+    if (bio.w.forest < 0.3 && bio.kind !== 'meadow' && bio.w.trail < 0.3) continue;
     if (lagoonFreeboard(x, z) < 0.15) continue;
     const f = {
       ax: x, az: z,
@@ -85,7 +87,8 @@ export function buildButterflies(player) {
           if (Math.random() < 0.22) {
             f.ax += (Math.random() - 0.5) * 7;
             f.az += (Math.random() - 0.5) * 7;
-            if (islandHeight(f.ax, f.az) < 2.3) { f.ax = f.x; f.az = f.z; }
+            const b2 = biomeAt(f.ax, f.az);
+            if (b2.w.forest < 0.2 && b2.kind !== 'meadow') { f.ax = f.x; f.az = f.z; }
           }
           f.tx = f.ax + (Math.random() - 0.5) * 2.4;
           f.tz = f.az + (Math.random() - 0.5) * 2.4;
