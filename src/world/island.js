@@ -119,13 +119,273 @@ export function shoreRange() { return { ...SHORE_RANGE }; }
 export function hmapHalf() { return HMAP_HALF_V; }
 
 // ------------------------------------------------------------------ trails
-// Phase 3 will grow a grade-bounded footpath network here. The stubs keep
-// the API stable so placement/shader code can already query it.
-export function trailInfo() {
-  return { paths: [], trailheadAz: GAPS.length ? GAPS[0].center : 0, lookouts: [] };
+// One seeded footpath crosses the island: beach trailhead → forest →
+// (pond bank) → clifftop lookout → switchbacks up the mountain flank →
+// the summit shelf. The polyline's height profile is grade-relaxed to
+// ≤ ~16°, and islandHeight blends the ground onto it inside a ~3.6m
+// ribbon — the path is CARVED, so it is walkable by construction.
+let TRAILS = { paths: [], lookouts: [], trailheadAz: 0 };
+let TRAILGRID = null; // { cell, half, cols, bins, segs } — null while growing
+const MAX_GRADE = Math.tan((16 * Math.PI) / 180); // ≈ 0.287
+const CARVE_IN = 1.7, CARVE_OUT = 3.6;            // bench half-widths
+let _tqD = 0, _tqY = 0;                            // trailQueryFast scratch
+
+function trailQueryFast(x, z) {
+  const g = TRAILGRID;
+  if (!g) return false;
+  const ci = Math.floor((x + g.half) / g.cell);
+  const cj = Math.floor((z + g.half) / g.cell);
+  if (ci < 0 || cj < 0 || ci >= g.cols || cj >= g.cols) return false;
+  const bin = g.bins[cj * g.cols + ci];
+  if (!bin) return false;
+  let bestD2 = Infinity, bestY = 0;
+  for (let k = 0; k < bin.length; k++) {
+    const s = g.segs[bin[k]];
+    const abx = s.bx - s.ax, abz = s.bz - s.az;
+    let t = ((x - s.ax) * abx + (z - s.az) * abz) / s.len2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = x - (s.ax + abx * t), dz = z - (s.az + abz * t);
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD2) { bestD2 = d2; bestY = s.ay + (s.by - s.ay) * t; }
+  }
+  if (bestD2 > 81) return false; // 9m: the widest a deep cut can flare
+  _tqD = Math.sqrt(bestD2);
+  _tqY = bestY;
+  return true;
 }
-export function trailQuery() { return null; }
-export function trailMask() { return 0; }
+
+export function trailInfo() {
+  return {
+    paths: TRAILS.paths.map((p) => ({ kind: p.kind, pts: p.pts.map((q) => ({ ...q })) })),
+    lookouts: TRAILS.lookouts.map((l) => ({ ...l })),
+    trailheadAz: TRAILS.trailheadAz,
+  };
+}
+
+// Distance to the nearest trail centerline + the path height there, or
+// null when out of reach. Placement code keeps props off the path with it.
+export function trailQuery(x, z) {
+  return trailQueryFast(x, z) ? { d: _tqD, y: _tqY } : null;
+}
+
+// 1 at the trodden centerline → 0 at the ribbon edge (dirt for the shader).
+export function trailMask(x, z) {
+  if (!trailQueryFast(x, z)) return 0;
+  const t = Math.min(Math.max((_tqD - 1.1) / (2.4 - 1.1), 0), 1);
+  return 1 - t * t * (3 - 2 * t);
+}
+
+// Catmull-Rom through the waypoints, resampled to ~6m spacing.
+function catmullChain(pts, step = 6) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i];
+    const p2 = pts[i + 1], p3 = pts[Math.min(i + 2, pts.length - 1)];
+    const dist = Math.hypot(p2.x - p1.x, p2.z - p1.z);
+    const n = Math.max(Math.ceil(dist / step), 1);
+    for (let k = 0; k < n; k++) {
+      const u = k / n, u2 = u * u, u3 = u2 * u;
+      out.push({
+        x: 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * u
+          + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * u2
+          + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * u3),
+        z: 0.5 * ((2 * p1.z) + (-p0.z + p2.z) * u
+          + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * u2
+          + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * u3),
+      });
+    }
+  }
+  out.push({ x: pts[pts.length - 1].x, z: pts[pts.length - 1].z });
+  return out;
+}
+
+// The elliptical radius of a peak's footprint along a world-space bearing.
+function peakEdgeRadius(P, worldAng) {
+  const ca = Math.cos(worldAng - Math.atan2(P.sinA, P.cosA));
+  const sa = Math.sin(worldAng - Math.atan2(P.sinA, P.cosA));
+  return 1 / Math.sqrt((ca / P.rx) ** 2 + (sa / P.rz) ** 2);
+}
+
+function reseedTrails() {
+  TRAILGRID = null; // islandHeight must run un-carved while we route
+  TRAILS = { paths: [], lookouts: [], trailheadAz: 0 };
+  const tr = mulberry32(subSeed('trail'));
+  const P = PEAKS[0];
+  const ridge = Math.atan2(P.sinA, P.cosA);
+
+  // --- waypoints across the lowlands ---
+  const gap = GAPS[0];
+  const thAz = gap.center + (tr() - 0.5) * gap.half * 0.5;
+  TRAILS.trailheadAz = thAz;
+  const thR = shoreRadius(thAz) - 12;
+  const TH = { x: Math.cos(thAz) * thR, z: Math.sin(thAz) * thR };
+
+  // the clifftop lookout sits on the widest cliff arc's headland shelf
+  const arc = ARCS.reduce((w, a) => (a.half > w.half ? a : w), ARCS[0]);
+  const loR = shoreRadius(arc.az) - (arc.riseW + 8);
+  const LO = { x: Math.cos(arc.az) * loR, z: Math.sin(arc.az) * loR };
+
+  // switchbacks start where the mountain faces the lookout side — walked
+  // back toward the peak if that ellipse edge pokes past the shoreline
+  // (a negative start height would NaN the whole climb schedule)
+  const toBase = Math.atan2(LO.z - P.z, LO.x - P.x);
+  let baseR = peakEdgeRadius(P, toBase) * 1.06;
+  const BASE = { x: P.x + Math.cos(toBase) * baseR, z: P.z + Math.sin(toBase) * baseR };
+  for (let i = 0; i < 24 && islandHeight(BASE.x, BASE.z) < 2; i++) {
+    baseR -= 4;
+    BASE.x = P.x + Math.cos(toBase) * baseR;
+    BASE.z = P.z + Math.sin(toBase) * baseR;
+  }
+
+  const way = [TH];
+  // a forest bend partway in, pushed sideways so the path snakes
+  {
+    const mx = TH.x + (LO.x - TH.x) * 0.45, mz = TH.z + (LO.z - TH.z) * 0.45;
+    const px = -(LO.z - TH.z), pz = LO.x - TH.x;
+    const pl = Math.hypot(px, pz) || 1;
+    const off = (tr() - 0.5) * 90;
+    way.push({ x: mx + (px / pl) * off, z: mz + (pz / pl) * off });
+  }
+  // the pond bank, when a pond exists and isn't a silly detour
+  if (LAGOONS.length) {
+    const L = LAGOONS[0];
+    const direct = Math.hypot(LO.x - TH.x, LO.z - TH.z);
+    const viaPond = Math.hypot(L.x - TH.x, L.z - TH.z) + Math.hypot(LO.x - L.x, LO.z - L.z);
+    if (viaPond < direct * 1.75) {
+      // the bank on the lookout side, so the path skirts the water
+      const away = Math.atan2(L.z - LO.z, L.x - LO.x);
+      way.push({
+        x: L.x - Math.cos(away) * (L.rOuter + 3.5),
+        z: L.z - Math.sin(away) * (L.rOuter + 3.5),
+      });
+    }
+  }
+  way.push(LO, BASE);
+
+  const pts = catmullChain(way, 6);
+  // never let a lowland bend stray onto the wet sand
+  for (const p of pts) {
+    const r = Math.hypot(p.x, p.z);
+    const sr = shoreRadius(Math.atan2(p.z, p.x));
+    if (r > sr - 7) {
+      const k = (sr - 7) / r;
+      p.x *= k; p.z *= k;
+    }
+  }
+  // paths follow contours: slide each bend sideways toward ground that
+  // matches its neighbours' height, so the route curls around hillocks
+  // instead of demanding a 10m cutting straight through them
+  for (let it = 0; it < 3; it++) {
+    for (let i = 1; i < pts.length - 1; i++) {
+      const prev = pts[i - 1], next = pts[i + 1], p = pts[i];
+      const tx = next.x - prev.x, tz = next.z - prev.z;
+      const tl = Math.hypot(tx, tz) || 1;
+      const nx = -tz / tl, nz = tx / tl;
+      const hMid = (islandHeight(prev.x, prev.z) + islandHeight(next.x, next.z)) / 2;
+      let bestOff = 0;
+      let bestCost = Math.abs(islandHeight(p.x, p.z) - hMid);
+      for (const off of [-8, 8]) {
+        const c = Math.abs(islandHeight(p.x + nx * off, p.z + nz * off) - hMid) + 0.35;
+        if (c < bestCost) { bestCost = c; bestOff = off; }
+      }
+      p.x += nx * bestOff;
+      p.z += nz * bestOff;
+    }
+  }
+
+  // --- switchbacks up the flank, grade-true by construction ---
+  const climb = [];
+  {
+    const hBase = Math.max(islandHeight(BASE.x, BASE.z), 2);
+    const hTop = P.h - 1.2; // the shelf blend finishes the last step
+    const window = 0.55 + tr() * 0.25;   // half-width of the flank we zigzag
+    const phiC = toBase - ridge;         // flank center, in ellipse frame
+    let phi = phiC + (tr() < 0.5 ? -1 : 1) * window * 0.8;
+    let dirPhi = phi > phiC ? -1 : 1;
+    let h = hBase;
+    let guard = 400;
+    let spiral = false; // near the crown the contour is too tight to zigzag
+    while (h < hTop && guard-- > 0) {
+      // ellipse-frame point at the current height's iso-contour
+      const u = Math.sqrt(Math.max(1 - Math.sqrt(h / P.h), 0.02));
+      const ex = P.rx * u * Math.cos(phi), ez = P.rz * u * Math.sin(phi);
+      climb.push({
+        x: P.x + ex * P.cosA - ez * P.sinA,
+        z: P.z + ex * P.sinA + ez * P.cosA,
+        y: h,
+      });
+      const rHere = Math.max(Math.hypot(ex, ez), 8);
+      if (rHere < 22) spiral = true;
+      phi += (6 / rHere) * dirPhi;          // ~6m of arc sideways…
+      h += 6 * MAX_GRADE * 0.92;            // …for ~1.6m of climb
+      if (!spiral) {
+        if (phi > phiC + window) { phi = phiC + window; dirPhi = -1; }
+        else if (phi < phiC - window) { phi = phiC - window; dirPhi = 1; }
+      }
+    }
+    climb.push({ x: P.x + P.cosA * 0.01, z: P.z + P.sinA * 0.01, y: P.h });
+  }
+
+  // --- one profile over the whole route, relaxed to the grade bound ---
+  const all = pts.map((p) => ({ x: p.x, z: p.z, y: islandHeight(p.x, p.z) }));
+  for (const c of climb) all.push(c);
+  for (let i = 0; i < all.length; i++) {
+    if (!Number.isFinite(all[i].x) || !Number.isFinite(all[i].z) || !Number.isFinite(all[i].y)) {
+      console.warn('[trail] non-finite route point', i, 'of', all.length, all[i]);
+      break;
+    }
+  }
+  const y0 = all[0].y, yN = all[all.length - 1].y;
+  for (let pass = 0; pass < 4; pass++) {
+    all[0].y = y0;
+    for (let i = 1; i < all.length; i++) {
+      const ds = Math.hypot(all[i].x - all[i - 1].x, all[i].z - all[i - 1].z);
+      const lim = MAX_GRADE * Math.max(ds, 0.5);
+      all[i].y = Math.min(Math.max(all[i].y, all[i - 1].y - lim), all[i - 1].y + lim);
+    }
+    all[all.length - 1].y = yN;
+    for (let i = all.length - 2; i >= 0; i--) {
+      const ds = Math.hypot(all[i + 1].x - all[i].x, all[i + 1].z - all[i].z);
+      const lim = MAX_GRADE * Math.max(ds, 0.5);
+      all[i].y = Math.min(Math.max(all[i].y, all[i + 1].y - lim), all[i + 1].y + lim);
+    }
+  }
+
+  TRAILS.paths.push({ kind: 'summit-track', pts: all });
+  TRAILS.lookouts.push(
+    { x: LO.x, z: LO.z, y: all.length ? islandHeight(LO.x, LO.z) : 0, name: 'clifftop' },
+    { x: P.x, z: P.z, y: P.h, name: 'summit' },
+  );
+
+  // --- spatial grid so islandHeight can ask "am I on the path?" cheaply ---
+  const cell = 8;
+  const half = Math.ceil(SHORE_RANGE.max + 8);
+  const cols = Math.ceil((2 * half) / cell);
+  const bins = new Array(cols * cols);
+  const segs = [];
+  for (const path of TRAILS.paths) {
+    const p = path.pts;
+    for (let i = 0; i < p.length - 1; i++) {
+      const a = p[i], b = p[i + 1];
+      const len2 = (b.x - a.x) ** 2 + (b.z - a.z) ** 2;
+      if (len2 < 1e-6) continue;
+      const si = segs.length;
+      segs.push({ ax: a.x, az: a.z, ay: a.y, bx: b.x, bz: b.z, by: b.y, len2 });
+      const pad = 9.5; // must reach as far as the widest cut flare
+      const i0 = Math.max(Math.floor((Math.min(a.x, b.x) - pad + half) / cell), 0);
+      const i1 = Math.min(Math.floor((Math.max(a.x, b.x) + pad + half) / cell), cols - 1);
+      const j0 = Math.max(Math.floor((Math.min(a.z, b.z) - pad + half) / cell), 0);
+      const j1 = Math.min(Math.floor((Math.max(a.z, b.z) + pad + half) / cell), cols - 1);
+      for (let j = j0; j <= j1; j++) {
+        for (let ii = i0; ii <= i1; ii++) {
+          const bi = j * cols + ii;
+          (bins[bi] || (bins[bi] = [])).push(si);
+        }
+      }
+    }
+  }
+  TRAILGRID = { cell, half, cols, bins, segs };
+}
 
 // Regrow shoreline lobes, coast sectors, mountains, terrain noise and the
 // offshore cay. The cay is a bare dome ~38m past the shoreline whose crown
@@ -193,6 +453,7 @@ export function reseedIsland() {
   HMAP_HALF_V = Math.ceil(mx + 100);
 
   reseedLagoons();
+  reseedTrails(); // after the ponds: the route reads their banks
 }
 
 // Mountains. The primary peak leans into the widest cliff arc so the range
@@ -389,7 +650,9 @@ function smax(a, b, k) {
   const t = Math.min(Math.max(0.5 + (0.5 * (b - a)) / k, 0), 1);
   return a * (1 - t) + b * t + k * t * (1 - t);
 }
-const smin = (a, b, k) => -smax(-a, -b, k);
+// hoisted like smax: reseedIsland() runs at module load, and the lagoon
+// hunt + trail routing sample islandHeight before this line would run
+function smin(a, b, k) { return -smax(-a, -b, k); }
 
 // Rolling hills + mountains — the island interior, past the beach apron.
 function interiorField(x, z) {
@@ -505,7 +768,19 @@ export function islandHeight(x, z) {
     }
   }
 
-  // (Phase 3 hook: trails carve a grade-clamped bench here via trailQuery)
+  // the footpath: blend the ground onto the grade-relaxed trail profile —
+  // a bench cut into slopes, a causeway over dips, walkable end to end.
+  // Deep cuts widen their mouth so a crossing reads as a ravine with
+  // shouldered sides, never a vertical slot.
+  if (TRAILGRID && trailQueryFast(x, z)) {
+    const cut = Math.abs(_tqY - h);
+    const out = Math.min(Math.max(CARVE_OUT, cut * 0.85), 9);
+    const m = 1 - sstep(CARVE_IN, out, _tqD);
+    if (m > 0) {
+      h += (_tqY - h) * m;
+      fineK *= 1 - 0.7 * m;
+    }
+  }
 
   // fine surface detail everywhere (fades in deep water)
   const fine = noise.fbm(x * 0.35, z * 0.35, 3) * 0.11
@@ -553,7 +828,8 @@ function classifyWeights(x, z, h, slopeY, out) {
   const dc = Math.hypot(x - CAY_POS.x, z - CAY_POS.z);
   if (dc < 26) sand = Math.max(sand, 1 - sstep(14, 24, dc));
 
-  const trail = trailMask(x, z);
+  // the dirt ribbon paints the walkable bench, not its cut walls
+  const trail = trailMask(x, z) * (1 - sstep(0.35, 0.55, 1 - slopeY));
   const steep = sstep(0.13, 0.34, 1 - slopeY);                 // rock from ~30°
   // the cliff-face band goes full rock only where the ground actually
   // tilts — the flat headland shelf keeps a heathy mix

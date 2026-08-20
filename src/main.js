@@ -10,6 +10,7 @@ import { mulberry32 } from './core/rng.js';
 import {
   buildTerrain, bakeMaps, islandHeight, shoreRadius, reseedIsland, lagoonInfo,
   summitPos, peaks, primaryGap, beachAz, coastInfo, biomeAt, shoreRange,
+  trailInfo, trailQuery,
 } from './world/island.js';
 import { buildPond } from './world/pond.js';
 import { buildFig } from './world/fig.js';
@@ -432,6 +433,8 @@ window.__beach = {
   coast: (az) => coastInfo(az),
   peaks: () => peaks(),
   summit: () => summitPos(),
+  trail: () => trailInfo(),
+  trailAt: (x, z) => trailQuery(x, z),
   gap: () => primaryGap(),
   range: () => shoreRange(),
   buildMs: () => world.buildMs,
