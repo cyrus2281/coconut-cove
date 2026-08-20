@@ -8,7 +8,8 @@ import {
 } from './core/seed.js';
 import { mulberry32 } from './core/rng.js';
 import {
-  buildTerrain, bakeHeightmap, islandHeight, shoreRadius, reseedIsland, lagoonInfo,
+  buildTerrain, bakeMaps, islandHeight, shoreRadius, reseedIsland, lagoonInfo,
+  summitPos, peaks, primaryGap, beachAz, coastInfo, biomeAt, shoreRange,
 } from './world/island.js';
 import { buildPond } from './world/pond.js';
 import { buildFig } from './world/fig.js';
@@ -74,14 +75,26 @@ const sleepFx = buildSleep(sky, warpClock);
 
 let world = null;
 
+// the surge beaches must sit on sandy coast, never against a sea cliff —
+// zone 0 takes the widest sandy gap (the spawn beach), zone 1 another
+function pickZoneAz(r, i, width, prevAz) {
+  if (i === 0) {
+    const g = primaryGap();
+    const room = Math.max(g.half - width - 0.1, 0.05);
+    return g.center + (r() - 0.5) * 2 * Math.min(room, 0.6);
+  }
+  return beachAz(r, { avoid: [prevAz], sep: 1.6, margin: width * 0.6 });
+}
+
 function buildWorldNow() {
-  reseedSwash();
-  reseedIsland();
+  const t0 = performance.now();
+  reseedIsland();          // coast sectors + peaks first…
+  reseedSwash(pickZoneAz); // …so the surge beaches can pick sandy shores
   player.respawn();
+  const maps = bakeMaps(1024);
   const terrain = buildTerrain();
   scene.add(terrain);
-  const heightTex = bakeHeightmap(512);
-  const ocean = buildOcean(heightTex);
+  const ocean = buildOcean(maps.heightTex);
   scene.add(ocean.group);
   sky.attachWater(ocean.material);
   const pond = buildPond();
@@ -138,10 +151,12 @@ function buildWorldNow() {
   // the surf layers pan to the surge beaches, which just moved
   audio.refreshZones();
   applyAnisotropy(renderer);
+  const buildMs = Math.round(performance.now() - t0);
+  console.info(`[cove] island #${getSeed()} grown in ${buildMs}ms`);
   return {
-    terrain, heightTex, ocean, pond, horizon, palms, fig, scatterG,
+    terrain, maps, ocean, pond, horizon, palms, fig, scatterG,
     campfire, fireflies, butterflies, coconuts, hammock, crabs, fish,
-    birds, turtles, reef, sealife,
+    birds, turtles, reef, sealife, buildMs,
   };
 }
 
@@ -190,7 +205,8 @@ function rebuildWorld() {
       scene.remove(obj);
       disposeDeep(obj);
     }
-    world.heightTex.dispose();
+    world.maps.heightTex.dispose();
+    world.maps.biomeTex.dispose();
     if (world.hammock.dispose) world.hammock.dispose(); // DOM hint + listeners
     if (player.resting) player.resting = false;
     footprints.clear();
@@ -296,8 +312,9 @@ function warpClock(s, skyToo = true) {
   if (skyToo) sky.warp(s);
 }
 
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+// One tick of the whole world. The rAF loop calls it, and tooling can drive
+// it synthetically (__beach.step) while the pane is hidden and rAF is parked.
+function stepFrame(dt, render = true) {
   t += dt;
   fpsEMA = fpsEMA * 0.97 + (dt > 0 ? 1 / dt : 60) * 0.03;
 
@@ -322,6 +339,7 @@ renderer.setAnimationLoop(() => {
   weather.update(t, dt);
   audio.update(t);
 
+  if (!render) return;
   renderer.render(scene, camera);
 
   // one-shot frame grab for tooling/screenshots (__beach.snap())
@@ -333,17 +351,59 @@ renderer.setAnimationLoop(() => {
     c2.getContext('2d').drawImage(renderer.domElement, 0, 0);
     window.__cap = c2.toDataURL('image/jpeg', 0.86);
   }
+}
+
+renderer.setAnimationLoop(() => {
+  stepFrame(Math.min(clock.getDelta(), 0.05));
 });
 
 // ---- debug hooks (used for automated screenshots; harmless in production) ----
-const VIEWS = {
-  overview: { pos: [95, 60, 95], yaw: Math.PI / 4, pitch: -0.42 },
-  beach: null, // spawn
-  waterline: { pos: [4, 1.8, 36], yaw: 2.6, pitch: -0.15 },
-  shells: { pos: [8.6, 1.35, 29.5], yaw: 2.5, pitch: -0.7 },
-  palm: { pos: [-5.2, 1.7, 34.8], yaw: 0.12, pitch: 0.62 },
-  sun: { pos: [-20, 2.2, 38], yaw: 2.2, pitch: -0.02 },
-};
+const yawToward = (fx, fz, tx, tz) => Math.atan2(-(tx - fx), -(tz - fz));
+
+// Stations are derived from the live island (summit, cliffs, spawn beach),
+// so they stay valid for any seed at any scale.
+function viewStations() {
+  const s = summitPos();
+  const g = primaryGap();
+  const R = shoreRange().max;
+  const gx = Math.cos(g.center), gz = Math.sin(g.center);
+  const spawnR = shoreRadius(g.center);
+  // the cliffiest bearing on the coast, for a lookout over the sea
+  let cliffAz = 0, cliffBest = -1;
+  for (let i = 0; i < 96; i++) {
+    const a = (i / 96) * Math.PI * 2;
+    const c = coastInfo(a);
+    if (c.cliffK > cliffBest) { cliffBest = c.cliffK; cliffAz = a; }
+  }
+  const cInfo = coastInfo(cliffAz);
+  const cr = shoreRadius(cliffAz) - (cInfo.riseW + 10);
+  const cx = Math.cos(cliffAz) * cr, cz = Math.sin(cliffAz) * cr;
+  const sx = Math.cos(cliffAz) * (cr + 60), sz = Math.sin(cliffAz) * (cr + 60);
+  return {
+    overview: {
+      pos: [R * 0.78, s.h + 130, R * 0.78],
+      yaw: yawToward(R * 0.78, R * 0.78, 0, 0), pitch: -0.5,
+    },
+    beach: null, // spawn
+    waterline: {
+      pos: [gx * (spawnR - 2), 1.8, gz * (spawnR - 2)],
+      yaw: yawToward(gx * (spawnR - 2), gz * (spawnR - 2), gx * (spawnR + 30), gz * (spawnR + 30)),
+      pitch: -0.15,
+    },
+    summit: {
+      pos: [s.x, s.h + 1.7, s.z],
+      yaw: yawToward(s.x, s.z, gx * spawnR, gz * spawnR), pitch: -0.14,
+    },
+    clifftop: {
+      pos: [cx, islandHeight(cx, cz) + 1.7, cz],
+      yaw: yawToward(cx, cz, sx, sz), pitch: -0.12,
+    },
+    trailhead: {
+      pos: [gx * (spawnR - 12), islandHeight(gx * (spawnR - 12), gz * (spawnR - 12)) + 1.7, gz * (spawnR - 12)],
+      yaw: yawToward(gx * (spawnR - 12), gz * (spawnR - 12), s.x, s.z), pitch: 0.08,
+    },
+  };
+}
 window.__beach = {
   scene, renderer, camera, player, uniforms, audio, footprints, sky, boat, weather,
   get birds() { return world.birds; },
@@ -368,6 +428,18 @@ window.__beach = {
   fps: () => Math.round(fpsEMA),
   info: () => ({ calls: renderer.info.render.calls, tris: renderer.info.render.triangles, fps: Math.round(fpsEMA) }),
   height: islandHeight,
+  biome: (x, z) => biomeAt(x, z),
+  coast: (az) => coastInfo(az),
+  peaks: () => peaks(),
+  summit: () => summitPos(),
+  gap: () => primaryGap(),
+  range: () => shoreRange(),
+  buildMs: () => world.buildMs,
+  // drive the world without rAF (hidden panes park it); renders the last tick
+  step(dt = 1 / 60, n = 1) {
+    for (let i = 0; i < n; i++) stepFrame(dt, i === n - 1);
+    return { t: +t.toFixed(2) };
+  },
   enter: enterWorld,
   // jump the world clock forward (pass false to leave the hour where it is)
   warp: warpClock,
@@ -464,7 +536,7 @@ window.__beach = {
   view(name) {
     overlay.classList.add('hidden');
     player.enabled = true;
-    const v = VIEWS[name];
+    const v = viewStations()[name];
     if (!v) return;
     player.pos.set(v.pos[0], v.pos[1], v.pos[2]);
     player.vel.set(0, 0, 0);

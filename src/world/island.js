@@ -2,6 +2,13 @@
 // One height function is the single source of truth — it shapes the mesh,
 // drives player collision, places props, and is baked to a texture that the
 // water shader samples for depth (foam, color, wave damping).
+//
+// World v2: the island is ~5-6x wider than it used to be. The first ~32m
+// inland of every sandy shore keeps the original beach profile (so the whole
+// shore ecosystem — crabs, shells, palms, wet sand — carries over untouched),
+// then the interior climbs into rolling hills and 2-3 real mountains. Seeded
+// coast arcs turn stretches of shoreline into sea cliffs; the sandy gaps
+// between them are where the beaches (and the swash zones) live.
 
 import * as THREE from 'three';
 import { Simplex2, mulberry32 } from '../core/rng.js';
@@ -14,6 +21,18 @@ import { sandTextures, causticTexture, foamTexture } from '../core/textures.js';
 // regrown from the master seed by reseedIsland().
 let noise, BASE_R, LOBES, CAY_POS;
 let LAGOONS = []; // 1-2 interior freshwater ponds (sometimes the hunt fails)
+let ARCS = [];    // sea-cliff coast sectors: { az, half, cliffH, riseW }
+let PEAKS = [];   // mountains, summit first: { x, z, h, rx, rz, cosA, sinA, shelfR, bb }
+let GAPS = [];    // sandy coast gaps between cliff arcs: { center, half }
+let SHORE_RANGE = { min: 0, max: 0 };
+let HMAP_HALF_V = 360; // world half-extent the baked maps cover (per island)
+
+const sstep = (a, b, x) => {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return t * t * (3 - 2 * t);
+};
+const wrapAng = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+const angDist = (a, b) => Math.abs(wrapAng(a - b));
 
 // Lobed shoreline: nominal water's-edge radius for a given angle.
 export function shoreRadius(theta) {
@@ -24,49 +43,267 @@ export function shoreRadius(theta) {
 
 export function cayCenter() { return { ...CAY_POS }; }
 
-// Regrow shoreline lobes, terrain noise and the offshore cay's bearing.
-// The cay is a bare dome ~38m past the shoreline whose crown pokes ~0.35m
-// above mean sea level: low tide bares a walkable islet, high tide drowns
-// it back to a shimmer of shallows.
+// ------------------------------------------------------------------ coast
+// How cliff-y the coast is at an azimuth (0 = sandy beach, 1 = full sea
+// cliff). Arcs never overlap (placement keeps them >1.15 rad apart), so the
+// dominant arc's face height/width ride along in module scratch.
+let _cH = 18, _cW = 12; // dominant arc params, set by cliffK()
+function cliffK(theta) {
+  let k = 0;
+  for (const a of ARCS) {
+    const f = 1 - sstep(a.half * 0.62, a.half, angDist(theta, a.az));
+    if (f > k) { k = f; _cH = a.cliffH; _cW = a.riseW; }
+  }
+  return k;
+}
+
+export function coastInfo(az) {
+  const k = cliffK(az);
+  return { cliffK: k, sandy: k < 0.35, cliffH: _cH, riseW: _cW };
+}
+
+export function isSandyShore(az) { return cliffK(az) < 0.35; }
+
+// The sandy gaps between cliff arcs, widest first.
+function computeGaps() {
+  if (!ARCS.length) {
+    GAPS = [{ center: 0, half: Math.PI }];
+    return;
+  }
+  const sorted = [...ARCS].sort((a, b) => a.az - b.az);
+  GAPS = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i];
+    const b = sorted[(i + 1) % sorted.length];
+    const start = a.az + a.half;
+    let span = (b.az - b.half) - start;
+    if (i === sorted.length - 1) span += Math.PI * 2;
+    if (span <= 0.05) continue;
+    GAPS.push({ center: wrapAng(start + span / 2), half: span / 2 });
+  }
+  GAPS.sort((a, b) => b.half - a.half);
+  if (!GAPS.length) GAPS = [{ center: 0, half: Math.PI }]; // can't happen, but never strand callers
+}
+
+// Widest sandy stretch of coast — where the spawn beach and swash zones live.
+export function primaryGap() { return { ...GAPS[0] }; }
+
+// A seeded azimuth guaranteed (keep-best) to land on sandy coast, as far as
+// possible from cliff arcs and from any azimuths the caller wants avoided.
+export function beachAz(rand, opts = {}) {
+  const { avoid = [], sep = 0, margin = 0.12 } = opts;
+  let best = 0, bestScore = -Infinity;
+  for (let i = 0; i < 40; i++) {
+    const az = rand() * Math.PI * 2;
+    let clr = Infinity;
+    for (const a of ARCS) clr = Math.min(clr, angDist(az, a.az) - a.half);
+    let sepD = Infinity;
+    for (const v of avoid) sepD = Math.min(sepD, angDist(az, v));
+    const score = Math.min(clr - margin, sepD - sep);
+    if (score > bestScore) { bestScore = score; best = az; }
+  }
+  return best;
+}
+
+// ------------------------------------------------------------------ peaks
+export function peaks() { return PEAKS.map((p) => ({ ...p })); }
+
+export function summitPos() {
+  const P = PEAKS[0];
+  return { x: P.x, z: P.z, h: P.h };
+}
+
+export function shoreRange() { return { ...SHORE_RANGE }; }
+export function hmapHalf() { return HMAP_HALF_V; }
+
+// ------------------------------------------------------------------ trails
+// Phase 3 will grow a grade-bounded footpath network here. The stubs keep
+// the API stable so placement/shader code can already query it.
+export function trailInfo() {
+  return { paths: [], trailheadAz: GAPS.length ? GAPS[0].center : 0, lookouts: [] };
+}
+export function trailQuery() { return null; }
+export function trailMask() { return 0; }
+
+// Regrow shoreline lobes, coast sectors, mountains, terrain noise and the
+// offshore cay. The cay is a bare dome ~38m past the shoreline whose crown
+// pokes ~0.35m above mean sea level: low tide bares a walkable islet, high
+// tide drowns it back to a shimmer of shallows.
 export function reseedIsland() {
   noise = new Simplex2(subSeed('terrain'));
   const r = mulberry32(subSeed('shore'));
-  BASE_R = 43 + r() * 7;
+  BASE_R = 240 + r() * 40;
   LOBES = [
-    { n: 2, a: 0.11 + r() * 0.11, ph: r() * Math.PI * 2 },
-    { n: 3, a: 0.05 + r() * 0.07, ph: r() * Math.PI * 2 },
-    { n: 5, a: 0.03 + r() * 0.04, ph: r() * Math.PI * 2 },
+    { n: 2, a: 0.10 + r() * 0.06, ph: r() * Math.PI * 2 },
+    { n: 3, a: 0.05 + r() * 0.04, ph: r() * Math.PI * 2 },
+    { n: 5, a: 0.025 + r() * 0.025, ph: r() * Math.PI * 2 },
+    { n: 7, a: 0.012 + r() * 0.013, ph: r() * Math.PI * 2 },
   ];
-  const cayAz = r() * Math.PI * 2;
+
+  // sea-cliff coast arcs: 1-3, kept far enough apart that at least two wide
+  // sandy gaps always survive between them
+  {
+    const cr = mulberry32(subSeed('coast'));
+    ARCS = [];
+    const nArc = 1 + (cr() < 0.55 ? 1 : 0) + (cr() < 0.2 ? 1 : 0);
+    for (let a = 0; a < nArc; a++) {
+      const half = 0.35 + cr() * 0.5;
+      const cliffH = 15 + cr() * 14;
+      const riseW = 9 + cr() * 6;
+      if (!ARCS.length) {
+        ARCS.push({ az: cr() * Math.PI * 2, half, cliffH, riseW });
+        continue;
+      }
+      let bAz = 0, bGap = -Infinity;
+      for (let i = 0; i < 40; i++) {
+        const az = cr() * Math.PI * 2;
+        let gap = Infinity;
+        for (const arc of ARCS) gap = Math.min(gap, angDist(az, arc.az) - half - arc.half);
+        if (gap > bGap) { bGap = gap; bAz = az; }
+      }
+      // an arc that can't keep a real beach between itself and its
+      // neighbours simply doesn't grow on this island
+      if (bGap >= 1.15) ARCS.push({ az: bAz, half, cliffH, riseW });
+    }
+    computeGaps();
+  }
+
+  // the cay prefers water off a sandy shore (its reef gardens follow it)
+  let cayAz = 0, cayScore = -Infinity;
+  for (let i = 0; i < 30; i++) {
+    const a = r() * Math.PI * 2;
+    const s = -cliffK(a);
+    if (s > cayScore) { cayScore = s; cayAz = a; }
+  }
   const cayR = shoreRadius(cayAz) + 35 + r() * 6;
   CAY_POS = { x: Math.cos(cayAz) * cayR, z: Math.sin(cayAz) * cayR };
+
+  reseedPeaks();
+
+  // world extents for the baked maps + ocean bands
+  let mn = Infinity, mx = 0;
+  for (let i = 0; i < 720; i++) {
+    const s = shoreRadius((i / 720) * Math.PI * 2);
+    if (s < mn) mn = s;
+    if (s > mx) mx = s;
+  }
+  SHORE_RANGE = { min: mn, max: mx };
+  HMAP_HALF_V = Math.ceil(mx + 100);
+
   reseedLagoons();
 }
 
-// Freshwater ponds in the island's interior: each one a dish scooped out
-// of a low inland hollow, ringed by a low dune berm. Hunting for naturally
-// walled hollows finds nothing on most seeds, so we sculpt the rim instead —
-// the berm only rises where the dunes don't already stand above the water,
-// which keeps a pond from reading as water hanging over lower ground.
-// Most islands get one; some get a smaller second pond further along.
+// Mountains. The primary peak leans into the widest cliff arc so the range
+// meets the sea in rock; every candidate is scored by how much sandy-shore
+// clearance it leaves (keep-best, never unplaced), so the beaches and their
+// forest fringe always fit between mountain foot and sand.
+function reseedPeaks() {
+  const pr = mulberry32(subSeed('peaks'));
+  PEAKS = [];
+  const n = 2 + (pr() < 0.5 ? 1 : 0);
+
+  const sandyClearance = (px, pz) => {
+    let clear = Infinity;
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      if (cliffK(a) > 0.3) continue;
+      const sr = shoreRadius(a);
+      const dx = px - Math.cos(a) * sr, dz = pz - Math.sin(a) * sr;
+      const dd = Math.hypot(dx, dz);
+      if (dd < clear) clear = dd;
+    }
+    return clear;
+  };
+
+  const finishPeak = (x, z, h, rx, rz, ang, shelfR) => ({
+    x, z, h, rx, rz,
+    ridgeAng: ang,
+    cosA: Math.cos(ang), sinA: Math.sin(ang),
+    shelfR,
+    bb: Math.max(rx, rz) * 1.02,
+  });
+
+  // primary: tallest, aimed at the widest cliff arc
+  const hP = 55 + pr() * 20;
+  const rxP = (1.35 + pr() * 0.65) * hP;
+  const rzP = (0.70 + pr() * 0.25) * rxP;
+  const arc = ARCS.reduce((w, a) => (a.half > w.half ? a : w), ARCS[0]);
+  let bx = 0, bz = 0, bAng = arc.az, bScore = -Infinity;
+  for (let i = 0; i < 40; i++) {
+    const azC = arc.az + (pr() - 0.5) * arc.half * 1.2;
+    const rr = shoreRadius(azC) - (0.55 + pr() * 0.35) * rxP;
+    const px = Math.cos(azC) * rr, pz = Math.sin(azC) * rr;
+    const score = Math.min(
+      sandyClearance(px, pz) - (rxP * 0.75 + 35), // room for beach + forest fringe
+      rr - rxP * 0.2                              // don't drift past the far shore
+    );
+    if (score > bScore) { bScore = score; bx = px; bz = pz; bAng = azC; }
+  }
+  const ridgeAng = bAng + (pr() - 0.5) * 0.6;
+  PEAKS.push(finishPeak(bx, bz, hP, rxP, rzP, ridgeAng, 7));
+
+  // secondary: shoulders off along the ridge, toward the interior
+  {
+    const h2 = hP * (0.55 + pr() * 0.2);
+    const rx2 = (1.4 + pr() * 0.5) * h2;
+    const rz2 = (0.7 + pr() * 0.25) * rx2;
+    const dist = (rxP + rx2) * 0.55;
+    // walk the ridge in whichever direction heads inland
+    const ca = Math.cos(ridgeAng), sa = Math.sin(ridgeAng);
+    const sgn = Math.hypot(bx + ca * dist, bz + sa * dist)
+      < Math.hypot(bx - ca * dist, bz - sa * dist) ? 1 : -1;
+    PEAKS.push(finishPeak(
+      bx + ca * dist * sgn, bz + sa * dist * sgn,
+      h2, rx2, rz2, ridgeAng + (pr() - 0.5) * 0.5, 0
+    ));
+  }
+
+  // an optional third hill-mountain, free-placed where it crowds nothing
+  if (n > 2) {
+    const h3 = hP * (0.35 + pr() * 0.15);
+    const rx3 = (1.4 + pr() * 0.5) * h3;
+    const rz3 = (0.75 + pr() * 0.2) * rx3;
+    let tx = 0, tz = 0, tAng = 0, tScore = -Infinity;
+    for (let i = 0; i < 40; i++) {
+      const a = pr() * Math.PI * 2;
+      const rr = (0.30 + pr() * 0.35) * BASE_R;
+      const px = Math.cos(a) * rr, pz = Math.sin(a) * rr;
+      let crowd = Infinity;
+      for (const P of PEAKS) {
+        crowd = Math.min(crowd, Math.hypot(px - P.x, pz - P.z) - (P.rx + rx3) * 0.55);
+      }
+      const score = Math.min(crowd, sandyClearance(px, pz) - (rx3 * 0.75 + 30));
+      if (score > tScore) { tScore = score; tx = px; tz = pz; tAng = a; }
+    }
+    PEAKS.push(finishPeak(tx, tz, h3, rx3, rz3, tAng + Math.PI / 2, 0));
+  }
+}
+
+// Freshwater ponds in the island's interior valleys: each one a dish scooped
+// out of a low hollow, ringed by a low berm. The hunt samples the whole
+// interior and keeps the lowest qualifying spot — never a mountain flank,
+// never inside a peak's footprint.
 function reseedLagoons() {
   LAGOONS = []; // islandHeight() must run un-carved while we scout for sites
   const lr = mulberry32(subSeed('lagoon'));
 
-  // lowest interior ground with room to spare from the beach (water gathers
-  // in the dips, and a basin near the shore would breach into the sea) and
-  // from any pond already dug (which is already carved into islandHeight)
   const hunt = (rOuter) => {
     let best = null;
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 420; i++) {
       const az = lr() * Math.PI * 2;
-      const rr = Math.sqrt(lr()) * 16;
+      const rr = Math.sqrt(lr()) * Math.max(shoreRadius(az) - 45, 20);
       const x = Math.cos(az) * rr, z = Math.sin(az) * rr;
       const inland = shoreRadius(Math.atan2(z, x)) - Math.hypot(x, z);
       if (inland < rOuter + 10) continue;
       if (LAGOONS.some((P) => Math.hypot(x - P.x, z - P.z) < P.rOuter + rOuter + 7)) continue;
+      let nearPeak = false;
+      for (const P of PEAKS) {
+        if (Math.hypot(x - P.x, z - P.z) < Math.max(P.rx, P.rz) * 1.05) { nearPeak = true; break; }
+      }
+      if (nearPeak) continue;
       const h = islandHeight(x, z);
-      if (h < 2.6) continue;          // needs elevation to hold water above the sea
+      if (h < 2.6) continue;  // needs elevation to hold water above the sea
+      if (h > 14) continue;   // a pond lives in a valley, not on a shoulder
       if (!best || h < best.h) best = { x, z, h };
     }
     return best;
@@ -87,8 +324,7 @@ function reseedLagoons() {
     return true;
   };
 
-  // the main pond (draw order matches the original single-pond code, so a
-  // pre-existing seed keeps the pond it always had)
+  // the main pond (draw order preserved from v1)
   dig(6.4 + lr() * 2.4, 0.8 + lr() * 0.28, lr() * Math.PI * 2, lr() * Math.PI * 2);
   // a smaller sister pond, some islands only
   if (lr() < 0.45) {
@@ -153,6 +389,28 @@ function smax(a, b, k) {
 }
 const smin = (a, b, k) => -smax(-a, -b, k);
 
+// Rolling hills + mountains — the island interior, past the beach apron.
+function interiorField(x, z) {
+  const H01 = 0.5 + 0.5 * noise.fbm(x * 0.010, z * 0.010, 4);
+  let h = 3.2 + 12.5 * Math.pow(Math.max(H01, 0), 1.35)
+    + 1.6 * noise.fbm(x * 0.045, z * 0.045, 3);
+  for (let i = 0; i < PEAKS.length; i++) {
+    const P = PEAKS[i];
+    const dx = x - P.x, dz = z - P.z;
+    if (Math.abs(dx) > P.bb || Math.abs(dz) > P.bb) continue;
+    const xr = (dx * P.cosA + dz * P.sinA) / P.rx;
+    const zr = (-dx * P.sinA + dz * P.cosA) / P.rz;
+    const u2 = xr * xr + zr * zr;
+    if (u2 >= 1) continue;
+    const s = 1 - u2;
+    // the fbm wobble scales with u so the apex is exactly P.h — the summit
+    // shelf blend below then has nothing steep to fight
+    const m = P.h * s * s * (1 + 0.22 * Math.sqrt(u2) * noise.fbm(x * 0.02, z * 0.02, 3));
+    h = smax(h, m, 10);
+  }
+  return h;
+}
+
 // World-space terrain height (y) at (x, z). Water level is y = 0.
 export function islandHeight(x, z) {
   const r = Math.hypot(x, z);
@@ -160,20 +418,43 @@ export function islandHeight(x, z) {
   const d = r - shoreRadius(theta); // signed dist to shoreline: - inland, + offshore
 
   let h;
-  if (d < 0) {
-    const t = -d; // meters inland
-    // beach climbing into a low dune plateau
-    h = 4.6 * Math.tanh((t * 0.085) / 4.6 * 3.2);
-    // rolling dunes grow with distance from the water
-    const duneAmp = Math.min(t / 16, 1) * 1.35;
-    h += duneAmp * noise.fbm(x * 0.045, z * 0.045, 4);
-  } else {
-    // gentle turquoise shelf, then a drop-off to the sea floor
+  let fineK = 1; // fine-detail gain (the summit shelf and trails calm it)
+  if (d >= 0) {
+    // offshore stays byte-identical to v1: gentle turquoise shelf, then a
+    // drop-off to the sea floor — every reef/sealife depth gate depends on it
     const shelf = Math.min(d, 80) * 0.055;
     const drop = 10.0 * THREE.MathUtils.smoothstep(d, 30, 78);
     h = -(shelf + drop);
     // subtle offshore sand bars
     h += Math.exp(-((d - 13) ** 2) / 90) * 0.28 * Math.sin(d * 0.7 + theta * 3.0);
+  } else {
+    const t = -d; // meters inland
+    const cK = cliffK(theta); // sets _cH/_cW for the dominant arc
+
+    // sandy profile: the original beach apron, blending into the interior
+    const wIn = t <= 32 ? 0 : t >= 70 ? 1 : sstep(32, 70, t);
+    let hBeach = 0;
+    if (wIn < 1) {
+      // beach climbing into a low dune plateau — EXACT v1 formula
+      hBeach = 4.6 * Math.tanh((t * 0.085) / 4.6 * 3.2);
+      const duneAmp = Math.min(t / 16, 1) * 1.35;
+      hBeach += duneAmp * noise.fbm(x * 0.045, z * 0.045, 4);
+    }
+    let hInt = 0;
+    let hasInt = false;
+    if (wIn > 0) { hInt = interiorField(x, z); hasInt = true; }
+    h = hBeach + (hInt - hBeach) * wIn;
+
+    // cliff profile: no apron — rock climbs straight out of the sea onto a
+    // headland shelf that hands over to the interior
+    if (cK > 0.002) {
+      if (!hasInt) hInt = interiorField(x, z);
+      const face = _cH * Math.pow(sstep(0, _cW, t + 1.5), 0.8)
+        + 0.9 * noise.fbm(x * 0.11, z * 0.11, 3) * sstep(2, _cW, t);
+      const top = smax(hInt, _cH * (1 - sstep(_cW, _cW + 60, t)), 5);
+      const hCliff = face + (top - face) * sstep(_cW * 0.8, _cW + 8, t);
+      h += (hCliff - h) * cK;
+    }
   }
 
   // the sandbar cay rises smoothly out of the shelf
@@ -184,7 +465,7 @@ export function islandHeight(x, z) {
   }
 
   // the interior ponds: dishes scooped out with smooth-min so their banks
-  // blend into the dunes instead of cutting crater lips
+  // blend into the ground instead of cutting crater lips
   for (let li = 0; li < LAGOONS.length; li++) {
     const L = LAGOONS[li];
     const dx = x - L.x, dz = z - L.z;
@@ -199,8 +480,8 @@ export function islandHeight(x, z) {
       const bowl = L.level - L.depth + L.depth * u * u + 2.6 * out * out;
       h = smin(h, bowl, 1.1);
 
-      // low dune berm just outside the waterline, wobbled so it isn't a donut.
-      // smax means it only shows up where the dunes are already too low.
+      // low berm just outside the waterline, wobbled so it isn't a donut.
+      // smax means it only shows up where the ground is already too low.
       const t = (dl - L.rBerm) / L.wBerm;
       const berm = L.level + L.hBerm * (1 + 0.4 * Math.sin(3 * ang + L.w2))
         - 1.8 * t * t;
@@ -208,10 +489,26 @@ export function islandHeight(x, z) {
     }
   }
 
+  // the summit shelf: a guaranteed-flat crown on the tallest peak, so the
+  // cairn and campfire always have level ground with a view
+  if (PEAKS.length) {
+    const P = PEAKS[0];
+    const dx = x - P.x, dz = z - P.z;
+    const d2 = dx * dx + dz * dz;
+    const rOut = P.shelfR + 6;
+    if (d2 < rOut * rOut) {
+      const sM = 1 - sstep(P.shelfR, rOut, Math.sqrt(d2));
+      h += (P.h - h) * sM;
+      fineK *= 1 - 0.85 * sM;
+    }
+  }
+
+  // (Phase 3 hook: trails carve a grade-clamped bench here via trailQuery)
+
   // fine surface detail everywhere (fades in deep water)
   const fine = noise.fbm(x * 0.35, z * 0.35, 3) * 0.11
     + noise.fbm(x * 0.09, z * 0.09, 3) * 0.22;
-  h += fine * THREE.MathUtils.clamp(1 - (-h - 4) / 6, 0.25, 1);
+  h += fine * THREE.MathUtils.clamp(1 - (-h - 4) / 6, 0.25, 1) * fineK;
 
   return h;
 }
@@ -222,49 +519,276 @@ export function islandNormal(x, z, eps = 0.35) {
   return new THREE.Vector3(-hx / (2 * eps), 1, -hz / (2 * eps)).normalize();
 }
 
-// ------------------------------------------------------------------ heightmap
-// Baked height texture for the water shader (half-float, R channel).
-export const HMAP_HALF = 160; // texture covers [-160, 160] on x and z
+// Allocation-free normal.y — the gate hot placement loops and the player's
+// slope rule actually need (1 = flat, 0 = vertical).
+export function islandSlopeY(x, z, eps = 0.6) {
+  const gx = (islandHeight(x + eps, z) - islandHeight(x - eps, z)) / (2 * eps);
+  const gz = (islandHeight(x, z + eps) - islandHeight(x, z - eps)) / (2 * eps);
+  return 1 / Math.sqrt(gx * gx + gz * gz + 1);
+}
 
-export function bakeHeightmap(size = 512) {
-  const data = new Uint16Array(size * size);
-  for (let j = 0; j < size; j++) {
-    const z = (j / (size - 1) - 0.5) * 2 * HMAP_HALF;
-    for (let i = 0; i < size; i++) {
-      const x = (i / (size - 1) - 0.5) * 2 * HMAP_HALF;
-      data[j * size + i] = THREE.DataUtils.toHalfFloat(islandHeight(x, z));
+// ------------------------------------------------------------------ biomes
+// One classification shared by the CPU (placement, footprints, audio) and
+// the baked mask the ground shader samples — they can never disagree.
+function classifyWeights(x, z, h, slopeY, out) {
+  const r = Math.hypot(x, z);
+  const theta = Math.atan2(z, x);
+  const t = shoreRadius(theta) - r; // + inland
+  const cK = cliffK(theta);
+
+  let sand;
+  if (t <= 0) {
+    sand = 1; // seafloor and the water's edge are always sand
+  } else {
+    sand = (1 - sstep(28, 55, t)) * (1 - cK * 0.85);
+  }
+  for (const L of LAGOONS) {
+    const dl = Math.hypot(x - L.x, z - L.z);
+    if (dl < L.rOuter * 1.35) {
+      sand = Math.max(sand, 1 - sstep(L.rOuter * 0.95, L.rOuter * 1.35, dl));
     }
   }
-  const t = new THREE.DataTexture(data, size, size, THREE.RedFormat, THREE.HalfFloatType);
-  t.magFilter = t.minFilter = THREE.LinearFilter;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.generateMipmaps = false;
-  t.needsUpdate = true;
-  return t;
+  const dc = Math.hypot(x - CAY_POS.x, z - CAY_POS.z);
+  if (dc < 26) sand = Math.max(sand, 1 - sstep(14, 24, dc));
+
+  const trail = trailMask(x, z);
+  const steep = sstep(0.13, 0.34, 1 - slopeY);                 // rock from ~30°
+  const face = cK * sstep(2, 8, t) * (1 - sstep(_cW + 20, _cW + 60, t));
+  const alt = sstep(26, 34, h);                                // bare summits
+  const rock = Math.min(Math.max(steep, Math.max(face, alt)), 1) * (1 - trail);
+
+  const forest = sstep(38, 58, t)
+    * sstep(3.0, 5.0, h) * (1 - sstep(22, 28, h))
+    * (1 - sstep(0.10, 0.20, 1 - slopeY))
+    * (1 - rock) * (1 - Math.min(sand, 1)) * (1 - trail);
+
+  out.sand = Math.max(sand * (1 - rock) * (1 - trail), 0);
+  out.trail = trail;
+  out.rock = rock;
+  out.forest = Math.max(forest, 0);
+  out.t = t;
+  out.cliffK = cK;
+  return out;
+}
+
+// Cheap biome classification at a point. Pass pre.h / pre.slopeY when the
+// caller already knows them (the bake does) to skip the height samples.
+export function biomeAt(x, z, pre) {
+  const h = pre && pre.h !== undefined ? pre.h : islandHeight(x, z);
+  const slopeY = pre && pre.slopeY !== undefined ? pre.slopeY : islandSlopeY(x, z);
+  const w = classifyWeights(x, z, h, slopeY, {
+    sand: 0, trail: 0, rock: 0, forest: 0, t: 0, cliffK: 0,
+  });
+  let kind = 'meadow';
+  if (w.t <= 0) kind = 'seafloor';
+  else if (w.trail > 0.5) kind = 'trail';
+  else if (w.rock >= Math.max(w.sand, w.forest, 0.45)) kind = 'rock';
+  else if (w.sand >= Math.max(w.forest, 0.45)) kind = 'beach';
+  else if (w.forest > 0.35) kind = 'forest';
+  return {
+    kind,
+    w: { sand: w.sand, trail: w.trail, rock: w.rock, forest: w.forest },
+    t: w.t, cliffK: w.cliffK, slopeY, h,
+  };
+}
+
+// ------------------------------------------------------------------ baked maps
+// One pass of islandHeight feeds two textures: the half-float heightmap the
+// water shader samples for depth, and an RGBA biome mask (R sand, G trail,
+// B rock, A forest) the ground shader blends by. Both cover ±hmapHalf().
+export function bakeMaps(size = 1024) {
+  const HH = HMAP_HALF_V;
+  const hs = new Float32Array(size * size);
+  const hdata = new Uint16Array(size * size);
+  for (let j = 0; j < size; j++) {
+    const z = (j / (size - 1) - 0.5) * 2 * HH;
+    for (let i = 0; i < size; i++) {
+      const x = (i / (size - 1) - 0.5) * 2 * HH;
+      const h = islandHeight(x, z);
+      hs[j * size + i] = h;
+      hdata[j * size + i] = THREE.DataUtils.toHalfFloat(h);
+    }
+  }
+  const heightTex = new THREE.DataTexture(hdata, size, size, THREE.RedFormat, THREE.HalfFloatType);
+  heightTex.magFilter = heightTex.minFilter = THREE.LinearFilter;
+  heightTex.wrapS = heightTex.wrapT = THREE.ClampToEdgeWrapping;
+  heightTex.generateMipmaps = false;
+  heightTex.needsUpdate = true;
+
+  // biome mask from the heights already in hand — zero extra islandHeight calls
+  const bdata = new Uint8Array(size * size * 4);
+  const texel = (2 * HH) / (size - 1);
+  const W = { sand: 0, trail: 0, rock: 0, forest: 0, t: 0, cliffK: 0 };
+  for (let j = 0; j < size; j++) {
+    const z = (j / (size - 1) - 0.5) * 2 * HH;
+    const j0 = Math.max(j - 1, 0) * size, j1 = Math.min(j + 1, size - 1) * size;
+    for (let i = 0; i < size; i++) {
+      const x = (i / (size - 1) - 0.5) * 2 * HH;
+      const idx = j * size + i;
+      const i0 = Math.max(i - 1, 0), i1 = Math.min(i + 1, size - 1);
+      const gx = (hs[j * size + i1] - hs[j * size + i0]) / ((i1 - i0) * texel);
+      const gz = (hs[j1 + i] - hs[j0 + i]) / (((j1 - j0) / size) * texel);
+      const slopeY = 1 / Math.sqrt(gx * gx + gz * gz + 1);
+      classifyWeights(x, z, hs[idx], slopeY, W);
+      const k = idx * 4;
+      bdata[k] = Math.round(W.sand * 255);
+      bdata[k + 1] = Math.round(W.trail * 255);
+      bdata[k + 2] = Math.round(W.rock * 255);
+      bdata[k + 3] = Math.round(W.forest * 255);
+    }
+  }
+  const biomeTex = new THREE.DataTexture(bdata, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  biomeTex.magFilter = biomeTex.minFilter = THREE.LinearFilter;
+  biomeTex.wrapS = biomeTex.wrapT = THREE.ClampToEdgeWrapping;
+  biomeTex.generateMipmaps = false;
+  biomeTex.needsUpdate = true;
+
+  return { heightTex, biomeTex, half: HH };
 }
 
 // ------------------------------------------------------------------ terrain mesh
-export function buildTerrain() {
-  const SIZE = 300, SEGS = 300;
-  const geo = new THREE.PlaneGeometry(SIZE, SIZE, SEGS, SEGS);
-  geo.rotateX(-Math.PI / 2);
+// The ground is a grid of world-space chunk meshes sharing one material:
+// fine (1.5m) over the island and its nearshore, coarse (6m) across the
+// outer seabed, skipped entirely once the deep floor flattens out. Chunks
+// frustum-cull individually — a mountain island can't be one giant mesh.
+const CHUNK = 48;
 
-  const pos = geo.attributes.position;
-  const normal = geo.attributes.normal;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    pos.setY(i, islandHeight(x, z));
-    const n = islandNormal(x, z);
-    normal.setXYZ(i, n.x, n.y, n.z);
+function chunkGeometry(x0, z0, segs, skirt) {
+  const pitch = CHUNK / segs;
+  const n = segs + 1;
+  // sample a lattice one ring wider than the chunk for seam-exact normals
+  const ln = segs + 3;
+  const lat = new Float32Array(ln * ln);
+  for (let j = 0; j < ln; j++) {
+    const z = z0 + (j - 1) * pitch;
+    for (let i = 0; i < ln; i++) {
+      lat[j * ln + i] = islandHeight(x0 + (i - 1) * pitch, z);
+    }
   }
-  geo.attributes.position.needsUpdate = true;
-  geo.attributes.normal.needsUpdate = true;
-  geo.computeBoundingSphere();
 
+  const skirtVerts = skirt ? 4 * n : 0;
+  const pos = new Float32Array((n * n + skirtVerts) * 3);
+  const nrm = new Float32Array((n * n + skirtVerts) * 3);
+  const uv = new Float32Array((n * n + skirtVerts) * 2);
+  const idx = [];
+  const TILE = 5.2;
+
+  for (let j = 0; j < n; j++) {
+    const z = z0 + j * pitch;
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * pitch;
+      const v = j * n + i;
+      const li = (j + 1) * ln + (i + 1);
+      pos[v * 3] = x;
+      pos[v * 3 + 1] = lat[li];
+      pos[v * 3 + 2] = z;
+      const hx = (lat[li + 1] - lat[li - 1]) / (2 * pitch);
+      const hz = (lat[li + ln] - lat[li - ln]) / (2 * pitch);
+      const inv = 1 / Math.sqrt(hx * hx + hz * hz + 1);
+      nrm[v * 3] = -hx * inv;
+      nrm[v * 3 + 1] = inv;
+      nrm[v * 3 + 2] = -hz * inv;
+      uv[v * 2] = x / TILE;
+      uv[v * 2 + 1] = z / TILE;
+    }
+  }
+  for (let j = 0; j < segs; j++) {
+    for (let i = 0; i < segs; i++) {
+      const a = j * n + i, b = a + 1, c = a + n, dd = c + 1;
+      idx.push(a, c, b, b, c, dd); // wound to face +Y
+    }
+  }
+
+  // skirt: the rim ring extruded 1.2m down, hiding fine/coarse T-junction
+  // cracks along the deep-water band
+  if (skirt) {
+    const edges = [
+      { walk: (k) => k, out: [0, -1] },                    // -z edge, left→right
+      { walk: (k) => (n - 1) * n + (n - 1 - k), out: [0, 1] }, // +z edge, right→left
+      { walk: (k) => (n - 1 - k) * n, out: [-1, 0] },      // -x edge, far→near
+      { walk: (k) => k * n + (n - 1), out: [1, 0] },       // +x edge, near→far
+    ];
+    let sv = n * n;
+    for (const e of edges) {
+      const base = sv;
+      for (let k = 0; k < n; k++) {
+        const rim = e.walk(k);
+        pos[sv * 3] = pos[rim * 3];
+        pos[sv * 3 + 1] = pos[rim * 3 + 1] - 1.2;
+        pos[sv * 3 + 2] = pos[rim * 3 + 2];
+        nrm[sv * 3] = e.out[0];
+        nrm[sv * 3 + 1] = 0;
+        nrm[sv * 3 + 2] = e.out[1];
+        uv[sv * 2] = pos[rim * 3] / TILE;
+        uv[sv * 2 + 1] = pos[rim * 3 + 2] / TILE;
+        sv++;
+      }
+      for (let k = 0; k < n - 1; k++) {
+        const r0 = e.walk(k), r1 = e.walk(k + 1);
+        const s0 = base + k, s1 = base + k + 1;
+        // each edge walks with the chunk on its LEFT, so rim→skirt quads
+        // wound this way face outward
+        idx.push(r0, r1, s0, r1, s1, s0);
+      }
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeBoundingSphere();
+  return geo;
+}
+
+export function buildTerrain() {
+  const mat = buildTerrainMaterial();
+  const group = new THREE.Group();
+  group.name = 'terrain';
+
+  const reach = SHORE_RANGE.max + 90; // last chunk ring: seabed flattening out
+  const half = Math.ceil(reach / CHUNK);
+  for (let cj = -half; cj < half; cj++) {
+    for (let ci = -half; ci < half; ci++) {
+      const x0 = ci * CHUNK, z0 = cj * CHUNK;
+      // classify from a coarse lattice of signed shore distances
+      let dMin = Infinity;
+      for (let j = 0; j <= 4; j++) {
+        for (let i = 0; i <= 4; i++) {
+          const x = x0 + (i / 4) * CHUNK, z = z0 + (j / 4) * CHUNK;
+          const d = Math.hypot(x, z) - shoreRadius(Math.atan2(z, x));
+          if (d < dMin) dMin = d;
+        }
+      }
+      if (dMin > 90) continue; // flat deep floor: the ocean covers it
+      // the cay is a walkable islet — keep it on the fine grid
+      const ccx = x0 + CHUNK / 2 - CAY_POS.x, ccz = z0 + CHUNK / 2 - CAY_POS.z;
+      const nearCay = Math.hypot(ccx, ccz) < 26 + CHUNK * 0.75;
+      const fine = dMin < 35 || nearCay;
+
+      const geo = chunkGeometry(x0, z0, fine ? 32 : 8, !fine);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.receiveShadow = true;
+      // only ground that can throw a real shadow (hills, mountains) joins
+      // the shadow pass — beach chunks would just burn fill rate
+      let maxH = -Infinity;
+      const p = geo.attributes.position;
+      for (let i = 1; i < p.count * 3; i += 3) if (p.array[i] > maxH) maxH = p.array[i];
+      mesh.castShadow = maxH > 12;
+      group.add(mesh);
+    }
+  }
+  return group;
+}
+
+function buildTerrainMaterial() {
   const { map, normalMap } = sandTextures();
   const TILE = 5.2; // meters per texture repeat
-  map.repeat.set(SIZE / TILE, SIZE / TILE);
-  normalMap.repeat.set(SIZE / TILE, SIZE / TILE);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(1, 1); // chunk UVs are world-space (x/TILE, z/TILE) already
+  normalMap.repeat.set(1, 1);
 
   const mat = new THREE.MeshStandardMaterial({
     map,
@@ -428,9 +952,5 @@ export function buildTerrain() {
   };
   mat.customProgramCacheKey = () => 'cove-sand-v7';
 
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.receiveShadow = true;
-  mesh.castShadow = false;
-  mesh.name = 'terrain';
-  return mesh;
+  return mat;
 }

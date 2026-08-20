@@ -295,6 +295,18 @@ export class Player {
     const dir = new THREE.Vector3(-sy * fwd + cy * strafe, 0, -cy * fwd - sy * strafe);
     if (dir.lengthSq() > 1) dir.normalize();
 
+    // the mountains are real: climbing slows past ~20° and stalls past ~50°.
+    // Only the uphill component is taxed — downhill and contouring stay at
+    // full speed, so a slope can never trap you (jump remains the escape
+    // hatch for small pockets).
+    let climbK = 1;
+    const dl = dir.length();
+    if (dl > 1e-4) {
+      const px = dir.x / dl, pz = dir.z / dl;
+      const grade = (islandHeight(this.pos.x + px * 0.7, this.pos.z + pz * 0.7) - ground) / 0.7;
+      if (grade > 0.36) climbK = 1 - THREE.MathUtils.smoothstep(grade, 0.36, 1.19);
+    }
+
     // wading drag. `tide` is the sea (the swash model below is a sea thing);
     // `water` is whatever stands underfoot, so the lagoon wades like the sea.
     const tide = uniforms.uTide.value;
@@ -321,8 +333,8 @@ export class Player {
 
     // horizontal velocity with pleasant accel/decel
     const accel = this.grounded ? 34 : 8;
-    this.vel.x += (dir.x * target * drag + driftX - this.vel.x) * Math.min(accel * dt, 1);
-    this.vel.z += (dir.z * target * drag + driftZ - this.vel.z) * Math.min(accel * dt, 1);
+    this.vel.x += (dir.x * target * drag * climbK + driftX - this.vel.x) * Math.min(accel * dt, 1);
+    this.vel.z += (dir.z * target * drag * climbK + driftZ - this.vel.z) * Math.min(accel * dt, 1);
 
     // gravity + jump
     this.vel.y -= GRAVITY * dt;
@@ -354,6 +366,19 @@ export class Player {
       this.grounded = true;
     } else if (this.pos.y > floor + 0.02) {
       this.grounded = false;
+    }
+
+    // standing on a near-vertical face (a cliff lip, a mountain wall): the
+    // ground sheds you downhill until you're back under ~50°
+    if (this.grounded) {
+      const gx = islandHeight(this.pos.x + 0.5, this.pos.z) - islandHeight(this.pos.x - 0.5, this.pos.z);
+      const gz = islandHeight(this.pos.x, this.pos.z + 0.5) - islandHeight(this.pos.x, this.pos.z - 0.5);
+      const steep = Math.hypot(gx, gz); // rise over the 1m probe baseline
+      if (steep > 1.19) {
+        const push = Math.min((steep - 1.19) * 8, 10);
+        this.vel.x -= (gx / steep) * push * dt;
+        this.vel.z -= (gz / steep) * push * dt;
+      }
     }
 
     // footprints: stamp alternating feet along the direction of travel

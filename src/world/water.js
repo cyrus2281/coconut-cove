@@ -6,17 +6,20 @@
 import * as THREE from 'three';
 import { uniforms } from '../core/env.js';
 import { swashUniforms, SWASH_GLSL } from './swash.js';
-import { HMAP_HALF } from './island.js';
+import { hmapHalf, shoreRange } from './island.js';
 import { waterNormalTexture, foamTexture } from '../core/textures.js';
 
-// Concentric grid: dense rings near the island, sparser further out.
-function buildDiskGeometry() {
-  const THETA = 360;
+// Concentric grid: dense rings across the shoreline's whole radial sweep
+// (the disk is origin-centered while the lobed shore wobbles by ±60m+),
+// sparser out over the shelf, sparse across the deep.
+function buildDiskGeometry(minS, maxS) {
+  const THETA = 540;
   const radii = [0.5];
   let r = 0.5;
-  while (r < 100) { r += 1.15; radii.push(r); }
-  while (r < 152) { r += 2.6; radii.push(r); }
-  while (r < 232) { r += 5.5; radii.push(r); }
+  while (r < minS - 50) { r += 12; radii.push(r); }   // hidden under the island
+  while (r < maxS + 55) { r += 1.9; radii.push(r); }  // surf band: swash lift + bores
+  while (r < maxS + 130) { r += 4.6; radii.push(r); } // shelf
+  while (r < maxS + 235) { r += 9.5; radii.push(r); } // drop-off into the deep
 
   const rings = radii.length;
   const verts = new Float32Array(rings * (THETA + 1) * 3);
@@ -74,9 +77,13 @@ for (const w of SWELL) {
 
 // Waves flatten as the water shallows and fade out before the mesh grows too
 // sparse to resolve them — mirrors ampScale in the vertex shader below.
+// The fade radii scale with the island (buildOcean refreshes them per seed);
+// the JS twin and the uWaveFade uniform always read the same values so
+// seaSurfaceY stays honest for everything that swims.
+const WAVE_FADE = { a: 150, b: 220 };
 function swellScale(x, z, depth) {
   const shallow = THREE.MathUtils.clamp(depth / 1.8, 0.1, 1.0);
-  return shallow * (1 - THREE.MathUtils.smoothstep(Math.hypot(x, z), 150.0, 220.0));
+  return shallow * (1 - THREE.MathUtils.smoothstep(Math.hypot(x, z), WAVE_FADE.a, WAVE_FADE.b));
 }
 
 // Height of the sea surface over (x, z) right now, given the terrain height
@@ -104,6 +111,7 @@ uniform float uTime;
 uniform float uTide;
 uniform sampler2D uHeight;
 uniform float uHmapHalf;
+uniform vec2 uWaveFade;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
 uniform vec4 uZone2;
@@ -151,7 +159,7 @@ void main() {
   // waves flatten as the water shallows, and fade out before the mesh
   // becomes too sparse to resolve them (the far ring stays flat)
   float shallow = clamp(depth0 / 1.8, 0.1, 1.0);
-  float distFade = 1.0 - smoothstep(150.0, 220.0, length(wp.xz));
+  float distFade = 1.0 - smoothstep(uWaveFade.x, uWaveFade.y, length(wp.xz));
   float ampScale = shallow * distFade;
 
   vec3 disp = vec3(0.0);
@@ -199,6 +207,7 @@ uniform float uNightF;
 uniform float uStorm;
 uniform float uRain;
 uniform float uWindAmp;
+uniform vec2 uCapFade;
 uniform int uDebug;
 uniform vec4 uZone1;
 uniform float uZone1Ph;
@@ -308,7 +317,7 @@ void main() {
 
   // rare whitecaps on open-water crests (not in the far fade-out zone)
   float cap = smoothstep(0.5, 0.68, vWaveH) * smoothstep(0.8, 0.97, m) * 0.22
-    * smoothstep(2.0, 5.0, depth) * (1.0 - smoothstep(110.0, 190.0, viewDist));
+    * smoothstep(2.0, 5.0, depth) * (1.0 - smoothstep(uCapFade.x, uCapFade.y, viewDist));
 
   // churning white bore front while a surge rushes up the beach
   float azF = atan(vWPos.z, vWPos.x);
@@ -383,6 +392,10 @@ void main() {
 `;
 
 export function buildOcean(heightTex) {
+  const { min: minS, max: maxS } = shoreRange();
+  // swell dies out past the island's own waters; the far ring stays flat
+  WAVE_FADE.a = maxS + 60;
+  WAVE_FADE.b = maxS + 140;
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -398,7 +411,9 @@ export function buildOcean(heightTex) {
       uSunDir: uniforms.uSunDir,
       uSunColor: { value: new THREE.Color(1.0, 0.86, 0.62) },
       uHeight: { value: heightTex },
-      uHmapHalf: { value: HMAP_HALF },
+      uHmapHalf: { value: hmapHalf() },
+      uWaveFade: { value: new THREE.Vector2(WAVE_FADE.a, WAVE_FADE.b) },
+      uCapFade: { value: new THREE.Vector2(220, 480) },
       uNormalTex: { value: waterNormalTexture() },
       uFoamTex: { value: foamTexture() },
       uDeepColor: { value: new THREE.Color(0.02, 0.16, 0.29) },
@@ -417,7 +432,7 @@ export function buildOcean(heightTex) {
   const group = new THREE.Group();
   group.name = 'ocean';
 
-  const diskGeo = buildDiskGeometry();
+  const diskGeo = buildDiskGeometry(minS, maxS);
   const inner = new THREE.Mesh(diskGeo, mat);
   inner.frustumCulled = false;
   inner.renderOrder = 2; // after footprint decals so floods tint them

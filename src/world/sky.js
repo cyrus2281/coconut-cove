@@ -153,17 +153,38 @@ export function buildSky(scene, renderer, camera) {
   }
   scene.environmentIntensity = 0.55;
 
-  // one light, two jobs (sun by day, moon by night — same shadow rig)
+  // one light, two jobs (sun by day, moon by night — same shadow rig).
+  // The island is far bigger than any shadow map, so the ortho box follows
+  // the player, snapped to the shadow texel grid so the map never shimmers.
+  const SHADOW_HALF = 110;
   const sun = new THREE.DirectionalLight(0xffffff, 3.0);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
   const sc = sun.shadow.camera;
-  sc.left = -90; sc.right = 90; sc.top = 90; sc.bottom = -90;
-  sc.near = 40; sc.far = 420;
+  sc.left = -SHADOW_HALF; sc.right = SHADOW_HALF;
+  sc.top = SHADOW_HALF; sc.bottom = -SHADOW_HALF;
+  sc.near = 60; sc.far = 640;
   sun.shadow.bias = -0.0002;
-  sun.shadow.normalBias = 0.06;
+  sun.shadow.normalBias = 0.1; // terrain casts now: hold acne on the slopes
   scene.add(sun);
   scene.add(sun.target);
+
+  // snap the follow point to the shadow camera's texel grid in light space
+  // (same basis three's lookAt builds: right = up×dir, up = dir×right)
+  const _lRight = new THREE.Vector3(), _lUp = new THREE.Vector3(), _snap = new THREE.Vector3();
+  function snapShadowTarget(dir, follow, out) {
+    _lRight.set(dir.z, 0, -dir.x);
+    if (_lRight.lengthSq() < 1e-6) _lRight.set(1, 0, 0);
+    _lRight.normalize();
+    _lUp.crossVectors(dir, _lRight);
+    const texel = (2 * SHADOW_HALF) / 4096;
+    const px = Math.round(follow.dot(_lRight) / texel) * texel;
+    const py = Math.round(follow.dot(_lUp) / texel) * texel;
+    const pz = follow.dot(dir);
+    return out.copy(_lRight).multiplyScalar(px)
+      .addScaledVector(_lUp, py)
+      .addScaledVector(dir, pz);
+  }
 
   const hemi = new THREE.HemisphereLight(0x8cb5e0, 0xd1b78c, 0.55);
   scene.add(hemi);
@@ -186,9 +207,9 @@ export function buildSky(scene, renderer, camera) {
         fog: true,
       });
       const s = new THREE.Sprite(mat);
-      const r = rand(380, 1500);
+      const r = rand(600, 1800);
       const a = rand(0, Math.PI * 2);
-      s.position.set(Math.cos(a) * r, rand(130, 340), Math.sin(a) * r);
+      s.position.set(Math.cos(a) * r, rand(200, 420), Math.sin(a) * r);
       const w = rand(180, 420);
       s.scale.set(w, w * rand(0.30, 0.42), 1);
       scene.add(s);
@@ -384,7 +405,10 @@ export function buildSky(scene, renderer, camera) {
     const moonI = 0.5 * sstep(3, 16, moonDeg);
     const moonRole = moonI > sunI;
     const roleDir = moonRole ? _moonDir : _sunDir;
-    sun.position.copy(roleDir).multiplyScalar(180);
+    // the shadow box rides with the player (texel-snapped so it never swims)
+    snapShadowTarget(roleDir, camera ? camera.position : sun.target.position, _snap);
+    sun.target.position.copy(_snap);
+    sun.position.copy(_snap).addScaledVector(roleDir, 340);
     sun.intensity = Math.max(sunI, moonI, 0.02)
       * (1 - 0.78 * storm) * (1 - 0.55 * fogW) + flash * 2.4;
     if (moonRole) sun.color.setRGB(0.55, 0.65, 0.95);
@@ -489,7 +513,7 @@ export function buildSky(scene, renderer, camera) {
     tod = (tod + dt / DAY_CYCLE_SECONDS) % 1;
     for (const c of clouds) {
       c.sprite.position.x += c.speed * dt;
-      if (c.sprite.position.x > 1700) c.sprite.position.x = -1700;
+      if (c.sprite.position.x > 2000) c.sprite.position.x = -2000;
     }
     updateMeteors(dt);
     apply(t);
