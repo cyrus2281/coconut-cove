@@ -14,6 +14,7 @@ import {
 } from './world/island.js';
 import { buildPond } from './world/pond.js';
 import { buildFig } from './world/fig.js';
+import { buildForest } from './world/forest.js';
 import { buildCampfire } from './world/campfire.js';
 import { buildFireflies } from './world/fireflies.js';
 import { buildButterflies } from './world/butterflies.js';
@@ -107,6 +108,8 @@ function buildWorldNow() {
   scene.add(palms.group);
   const fig = buildFig();
   scene.add(fig.group);
+  const forest = buildForest(); // after the fig: it clears her glade
+  scene.add(forest.group);
   const scatterG = buildScatter();
   scene.add(scatterG);
   const campfire = buildCampfire(); // after scatter: it camps beside the cairn
@@ -155,7 +158,7 @@ function buildWorldNow() {
   const buildMs = Math.round(performance.now() - t0);
   console.info(`[cove] island #${getSeed()} grown in ${buildMs}ms`);
   return {
-    terrain, maps, ocean, pond, horizon, palms, fig, scatterG,
+    terrain, maps, ocean, pond, horizon, palms, fig, forest, scatterG,
     campfire, fireflies, butterflies, coconuts, hammock, crabs, fish,
     birds, turtles, reef, sealife, buildMs,
   };
@@ -197,7 +200,7 @@ function rebuildWorld() {
   if (world) {
     for (const obj of [
       world.terrain, world.ocean.group, world.pond.group, world.horizon.group,
-      world.palms.group, world.fig.group, world.scatterG, world.campfire.group,
+      world.palms.group, world.fig.group, world.forest.group, world.scatterG, world.campfire.group,
       world.fireflies.group, world.butterflies.group, world.coconuts.group,
       world.hammock.group, world.crabs.group, world.fish.group,
       world.birds.group, world.turtles.group, world.reef.group,
@@ -322,6 +325,7 @@ function stepFrame(dt, render = true) {
   uniforms.uTime.value = t;
   player.update(dt);
   touchUI.setSwimming(player.swimming);
+  world.forest.update(player);
   world.birds.update(t, dt);
   sky.update(dt, t);
   underwater.update(t, dt); // after sky: it overrides the fog when submerged
@@ -416,6 +420,7 @@ window.__beach = {
   get reef() { return world.reef; },
   get sealife() { return world.sealife; },
   get campfire() { return world.campfire; },
+  get forest() { return world.forest; },
   get fireflies() { return world.fireflies; },
   get butterflies() { return world.butterflies; },
   get coconuts() { return world.coconuts; },
