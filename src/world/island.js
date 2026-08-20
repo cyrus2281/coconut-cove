@@ -138,6 +138,10 @@ function trailQueryFast(x, z) {
   if (ci < 0 || cj < 0 || ci >= g.cols || cj >= g.cols) return false;
   const bin = g.bins[cj * g.cols + ci];
   if (!bin) return false;
+  // nearest segment wins outright: ON any leg's centerline the path height
+  // IS that leg's height, which is what keeps the walked grade equal to the
+  // relaxed profile's. (A distance-weighted blend across nearby switchback
+  // legs was tried and sawtoothed every hairpin.)
   let bestD2 = Infinity, bestY = 0;
   for (let k = 0; k < bin.length; k++) {
     const s = g.segs[bin[k]];
@@ -220,22 +224,36 @@ function reseedTrails() {
   const thR = shoreRadius(thAz) - 12;
   const TH = { x: Math.cos(thAz) * thR, z: Math.sin(thAz) * thR };
 
-  // the clifftop lookout sits on the widest cliff arc's headland shelf
+  // the clifftop lookout sits on the widest cliff arc's headland shelf —
+  // slid along the arc away from the summit crown when the peak leans so
+  // hard into its cliff that the headland IS the upper flank (a lookout
+  // inside the shelf ring makes the approach trench against the crown)
   const arc = ARCS.reduce((w, a) => (a.half > w.half ? a : w), ARCS[0]);
-  const loR = shoreRadius(arc.az) - (arc.riseW + 8);
-  const LO = { x: Math.cos(arc.az) * loR, z: Math.sin(arc.az) * loR };
-
-  // switchbacks start where the mountain faces the lookout side — walked
-  // back toward the peak if that ellipse edge pokes past the shoreline
-  // (a negative start height would NaN the whole climb schedule)
-  const toBase = Math.atan2(LO.z - P.z, LO.x - P.x);
-  let baseR = peakEdgeRadius(P, toBase) * 1.06;
-  const BASE = { x: P.x + Math.cos(toBase) * baseR, z: P.z + Math.sin(toBase) * baseR };
-  for (let i = 0; i < 24 && islandHeight(BASE.x, BASE.z) < 2; i++) {
-    baseR -= 4;
-    BASE.x = P.x + Math.cos(toBase) * baseR;
-    BASE.z = P.z + Math.sin(toBase) * baseR;
+  let LO = null, loBest = -Infinity;
+  for (let k = -2; k <= 2; k++) {
+    const az = arc.az + k * arc.half * 0.35;
+    const r0 = shoreRadius(az) - (arc.riseW + 8);
+    const cx = Math.cos(az) * r0, cz = Math.sin(az) * r0;
+    const dP = Math.hypot(cx - P.x, cz - P.z);
+    if (dP > loBest) { loBest = dP; LO = { x: cx, z: cz }; }
   }
+  const loMin = P.shelfR + 13;
+  if (loBest < loMin) {
+    // the whole headland hugs the crown: the lookout becomes the crown's
+    // seaward brink, just off the shelf
+    const a = Math.atan2(LO.z - P.z, LO.x - P.x);
+    LO = { x: P.x + Math.cos(a) * loMin, z: P.z + Math.sin(a) * loMin };
+  }
+
+  // the switchback ladder climbs straight from the lookout: the peak leans
+  // into its cliff arc, so the headland usually sits ON the flank — any
+  // separate "mountain base" bearing ends up radial to the lookout and the
+  // route tunnels through the flank it's about to climb
+  const toBase = Math.atan2(LO.z - P.z, LO.x - P.x);
+  const BASE = {
+    x: LO.x - Math.cos(toBase) * 6,
+    z: LO.z - Math.sin(toBase) * 6,
+  };
 
   const way = [TH];
   // a forest bend partway in, pushed sideways so the path snakes
@@ -261,6 +279,32 @@ function reseedTrails() {
     }
   }
   way.push(LO, BASE);
+
+  // route around the mountains: a leg whose middle passes over a peak's
+  // core detours around the foot instead — the relax would otherwise carve
+  // a canyon across the crown (legs that merely END near a peak, like the
+  // lookout approach, are the climb's business and stay)
+  for (let pass = 0; pass < 2; pass++) {
+    for (const PK of PEAKS) {
+      const clearR = ((PK.rx + PK.rz) / 2) * 0.8;
+      for (let i = 0; i < way.length - 1; i++) {
+        const a = way[i], b = way[i + 1];
+        const abx = b.x - a.x, abz = b.z - a.z;
+        const len2 = abx * abx + abz * abz;
+        if (len2 < 1) continue;
+        let t = ((PK.x - a.x) * abx + (PK.z - a.z) * abz) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const cx = a.x + abx * t, cz = a.z + abz * t;
+        const d = Math.hypot(cx - PK.x, cz - PK.z);
+        if (d >= clearR * 0.72 || t <= 0.03 || t >= 0.97) continue;
+        const dEnds = Math.min(Math.hypot(a.x - PK.x, a.z - PK.z), Math.hypot(b.x - PK.x, b.z - PK.z));
+        if (dEnds < d + 6) continue; // the leg only grazes as far as its ends do
+        const ox = (cx - PK.x) / Math.max(d, 1), oz = (cz - PK.z) / Math.max(d, 1);
+        way.splice(i + 1, 0, { x: PK.x + ox * clearR, z: PK.z + oz * clearR });
+        i++;
+      }
+    }
+  }
 
   const pts = catmullChain(way, 6);
   // never let a lowland bend stray onto the wet sand
@@ -297,33 +341,55 @@ function reseedTrails() {
   const climb = [];
   {
     const hBase = Math.max(islandHeight(BASE.x, BASE.z), 2);
-    const hTop = P.h - 1.2; // the shelf blend finishes the last step
+    const hTop = P.h - 2.2; // stop below the crown: the shelf takes it home
     const window = 0.55 + tr() * 0.25;   // half-width of the flank we zigzag
-    const phiC = toBase - ridge;         // flank center, in ellipse frame
-    let phi = phiC + (tr() < 0.5 ? -1 : 1) * window * 0.8;
-    let dirPhi = phi > phiC ? -1 : 1;
+    // the ladder's window centers on where the lookout ACTUALLY sits in the
+    // ellipse frame (the axes scale differently, so a bare bearing is off)
+    const bx = ((BASE.x - P.x) * P.cosA + (BASE.z - P.z) * P.sinA) / P.rx;
+    const bz = (-(BASE.x - P.x) * P.sinA + (BASE.z - P.z) * P.cosA) / P.rz;
+    const phiC = Math.atan2(bz, bx);
+    let phi = phiC;                      // first rung starts right at the lookout
+    let dirPhi = tr() < 0.5 ? -1 : 1;
     let h = hBase;
     let guard = 400;
-    let spiral = false; // near the crown the contour is too tight to zigzag
+    let spiral = 0; // near the crown the contour is too tight to zigzag
+    let landing = 0; // level steps after each hairpin — the legs beside a
+    // turn then sit at matching heights, so the carve's nearest-leg pick
+    // can't build a step wall across the bend
     while (h < hTop && guard-- > 0) {
       // ellipse-frame point at the current height's iso-contour
       const u = Math.sqrt(Math.max(1 - Math.sqrt(h / P.h), 0.02));
       const ex = P.rx * u * Math.cos(phi), ez = P.rz * u * Math.sin(phi);
+      const rHere = Math.max(Math.hypot(ex, ez), 8);
+      // never orbit into the summit shelf's influence: in there the flat
+      // crown owns the ground, and a rung dragging its lower schedule
+      // height through would carve walls against it — the relax spreads
+      // whatever climb remains over the rungs below instead
+      if (rHere < P.shelfR + 9) break;
       climb.push({
         x: P.x + ex * P.cosA - ez * P.sinA,
         z: P.z + ex * P.sinA + ez * P.cosA,
         y: h,
       });
-      const rHere = Math.max(Math.hypot(ex, ez), 8);
-      if (rHere < 22) spiral = true;
+      if (spiral || rHere < 22) spiral++;
+      if (spiral > 60) break; // never lap over the ladder below
       phi += (6 / rHere) * dirPhi;          // ~6m of arc sideways…
-      h += 6 * MAX_GRADE * 0.92;            // …for ~1.6m of climb
+      if (landing > 0) landing--;
+      else h += 6 * MAX_GRADE * 0.92;       // …for ~1.6m of climb
       if (!spiral) {
-        if (phi > phiC + window) { phi = phiC + window; dirPhi = -1; }
-        else if (phi < phiC - window) { phi = phiC - window; dirPhi = 1; }
+        if (phi > phiC + window) { phi = phiC + window; dirPhi = -1; landing = 2; }
+        else if (phi < phiC - window) { phi = phiC - window; dirPhi = 1; landing = 2; }
       }
     }
-    climb.push({ x: P.x + P.cosA * 0.01, z: P.z + P.sinA * 0.01, y: P.h });
+    // finish at the shelf edge, on the bearing we arrived from — the shelf
+    // itself is flat and carved by nothing
+    const last = climb[climb.length - 1] || BASE;
+    const inA = Math.atan2(last.z - P.z, last.x - P.x);
+    climb.push({
+      x: P.x + Math.cos(inA) * (P.shelfR - 0.5),
+      z: P.z + Math.sin(inA) * (P.shelfR - 0.5),
+      y: P.h,
+    });
   }
 
   // --- one profile over the whole route, relaxed to the grade bound ---
@@ -335,19 +401,29 @@ function reseedTrails() {
       break;
     }
   }
+  // the summit shelf is immovable ground (the carve yields to it), so the
+  // profile must never dive beneath it — floor each point inside every pass
+  // and let the grade clamps spread the difference back down the route
+  const shelfFloor = (x, z) => {
+    const d = Math.hypot(x - P.x, z - P.z);
+    if (d >= P.shelfR + 6) return -Infinity;
+    return P.h * (1 - sstep(P.shelfR, P.shelfR + 6, d));
+  };
   const y0 = all[0].y, yN = all[all.length - 1].y;
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 6; pass++) {
     all[0].y = y0;
     for (let i = 1; i < all.length; i++) {
       const ds = Math.hypot(all[i].x - all[i - 1].x, all[i].z - all[i - 1].z);
       const lim = MAX_GRADE * Math.max(ds, 0.5);
       all[i].y = Math.min(Math.max(all[i].y, all[i - 1].y - lim), all[i - 1].y + lim);
+      all[i].y = Math.max(all[i].y, shelfFloor(all[i].x, all[i].z));
     }
     all[all.length - 1].y = yN;
     for (let i = all.length - 2; i >= 0; i--) {
       const ds = Math.hypot(all[i + 1].x - all[i].x, all[i + 1].z - all[i].z);
       const lim = MAX_GRADE * Math.max(ds, 0.5);
       all[i].y = Math.min(Math.max(all[i].y, all[i + 1].y - lim), all[i + 1].y + lim);
+      all[i].y = Math.max(all[i].y, shelfFloor(all[i].x, all[i].z));
     }
   }
 
@@ -392,6 +468,11 @@ function reseedTrails() {
 // pokes ~0.35m above mean sea level: low tide bares a walkable islet, high
 // tide drowns it back to a shimmer of shallows.
 export function reseedIsland() {
+  // the OLD island's trail carve must not deform a single height sample of
+  // the new one (the lagoon hunt reads islandHeight before reseedTrails
+  // runs — with a stale grid live, the pond, and then the whole route,
+  // depended on which island you regrew FROM)
+  TRAILGRID = null;
   noise = new Simplex2(subSeed('terrain'));
   const r = mulberry32(subSeed('shore'));
   BASE_R = 240 + r() * 40;
@@ -756,26 +837,28 @@ export function islandHeight(x, z) {
 
   // the summit shelf: a guaranteed-flat crown on the tallest peak, so the
   // cairn and campfire always have level ground with a view
+  let shelfM = 0;
   if (PEAKS.length) {
     const P = PEAKS[0];
     const dx = x - P.x, dz = z - P.z;
     const d2 = dx * dx + dz * dz;
     const rOut = P.shelfR + 6;
     if (d2 < rOut * rOut) {
-      const sM = 1 - sstep(P.shelfR, rOut, Math.sqrt(d2));
-      h += (P.h - h) * sM;
-      fineK *= 1 - 0.85 * sM;
+      shelfM = 1 - sstep(P.shelfR, rOut, Math.sqrt(d2));
+      h += (P.h - h) * shelfM;
+      fineK *= 1 - 0.85 * shelfM;
     }
   }
 
   // the footpath: blend the ground onto the grade-relaxed trail profile —
   // a bench cut into slopes, a causeway over dips, walkable end to end.
   // Deep cuts widen their mouth so a crossing reads as a ravine with
-  // shouldered sides, never a vertical slot.
-  if (TRAILGRID && trailQueryFast(x, z)) {
+  // shouldered sides, never a vertical slot. The summit shelf outranks the
+  // carve: the trail arrives at its edge and the flat crown takes over.
+  if (TRAILGRID && shelfM < 0.999 && trailQueryFast(x, z)) {
     const cut = Math.abs(_tqY - h);
     const out = Math.min(Math.max(CARVE_OUT, cut * 0.85), 9);
-    const m = 1 - sstep(CARVE_IN, out, _tqD);
+    const m = (1 - sstep(CARVE_IN, out, _tqD)) * (1 - shelfM);
     if (m > 0) {
       h += (_tqY - h) * m;
       fineK *= 1 - 0.7 * m;

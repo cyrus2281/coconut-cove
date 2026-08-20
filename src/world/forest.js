@@ -319,6 +319,64 @@ function shrubVariant(rand) {
   return { leaf: data.build() };
 }
 
+// the forest's seven materials — shared across every chunk of a build
+function forestMaterials() {
+  return {
+    kapokBark: windMelt(new THREE.MeshStandardMaterial({
+      map: kapokBarkTexture(), roughness: 0.9,
+    }), 'kapokbark', false),
+    kapokLeaf: windMelt(new THREE.MeshStandardMaterial({
+      map: canopyClusterTexture(), alphaTest: 0.42, side: THREE.DoubleSide,
+      roughness: 0.6, vertexColors: true,
+    }), 'kapokleaf', false),
+    almondBark: windMelt(new THREE.MeshStandardMaterial({
+      map: barkTexture(true), roughness: 0.92,
+    }), 'almondbark', false),
+    almondLeaf: windMelt(new THREE.MeshStandardMaterial({
+      map: canopyClusterTexture(), alphaTest: 0.42, side: THREE.DoubleSide,
+      roughness: 0.62, vertexColors: true,
+    }), 'almondleaf', false),
+    banana: windMelt(new THREE.MeshStandardMaterial({
+      map: bananaLeafTexture(), alphaTest: 0.4, side: THREE.DoubleSide,
+      roughness: 0.55, vertexColors: true,
+    }), 'banana', true),
+    fern: windMelt(new THREE.MeshStandardMaterial({
+      vertexColors: true, side: THREE.DoubleSide, roughness: 0.7,
+    }), 'fern', true),
+    shrub: windMelt(new THREE.MeshStandardMaterial({
+      map: bigLeafTexture(), alphaTest: 0.4, side: THREE.DoubleSide,
+      roughness: 0.6, vertexColors: true,
+    }), 'shrub', true),
+  };
+}
+
+const SPECIES_BUILDERS = {
+  kapok: kapokVariant, almond: almondVariant,
+  banana: bananaVariant, fern: fernVariant, shrub: shrubVariant,
+};
+
+// one plant standing at the origin — the /components studio uses this
+// (a plain Mesh works against the instanced shader: aPhase is a per-vertex
+// zero there, and the melt hides behind USE_INSTANCING)
+export function buildForestPlant(species, rand) {
+  const v = SPECIES_BUILDERS[species](rand);
+  const mats = forestMaterials();
+  const matFor = {
+    kapok: ['kapokBark', 'kapokLeaf'], almond: ['almondBark', 'almondLeaf'],
+    banana: ['banana', 'banana'], fern: ['fern', 'fern'], shrub: ['shrub', 'shrub'],
+  }[species];
+  const g = new THREE.Group();
+  if (v.bark) {
+    const bark = new THREE.Mesh(v.bark, mats[matFor[0]]);
+    bark.castShadow = true; bark.receiveShadow = true;
+    g.add(bark);
+  }
+  const leaf = new THREE.Mesh(v.leaf, mats[matFor[1]]);
+  leaf.castShadow = true; leaf.receiveShadow = true;
+  g.add(leaf);
+  return g;
+}
+
 // share one variant's vertex data across chunks, each chunk carrying its
 // own per-instance aPhase (instanced attributes live on the geometry, so
 // chunks can't share one geometry object — but they CAN share the buffers)
@@ -353,33 +411,7 @@ export function buildForest() {
     shrub: [shrubVariant(geoRand), shrubVariant(geoRand), shrubVariant(geoRand)],
   };
 
-  const mats = {
-    kapokBark: windMelt(new THREE.MeshStandardMaterial({
-      map: kapokBarkTexture(), roughness: 0.9,
-    }), 'kapokbark', false),
-    kapokLeaf: windMelt(new THREE.MeshStandardMaterial({
-      map: canopyClusterTexture(), alphaTest: 0.42, side: THREE.DoubleSide,
-      roughness: 0.6, vertexColors: true,
-    }), 'kapokleaf', false),
-    almondBark: windMelt(new THREE.MeshStandardMaterial({
-      map: barkTexture(true), roughness: 0.92,
-    }), 'almondbark', false),
-    almondLeaf: windMelt(new THREE.MeshStandardMaterial({
-      map: canopyClusterTexture(), alphaTest: 0.42, side: THREE.DoubleSide,
-      roughness: 0.62, vertexColors: true,
-    }), 'almondleaf', false),
-    banana: windMelt(new THREE.MeshStandardMaterial({
-      map: bananaLeafTexture(), alphaTest: 0.4, side: THREE.DoubleSide,
-      roughness: 0.55, vertexColors: true,
-    }), 'banana', true),
-    fern: windMelt(new THREE.MeshStandardMaterial({
-      vertexColors: true, side: THREE.DoubleSide, roughness: 0.7,
-    }), 'fern', true),
-    shrub: windMelt(new THREE.MeshStandardMaterial({
-      map: bigLeafTexture(), alphaTest: 0.4, side: THREE.DoubleSide,
-      roughness: 0.6, vertexColors: true,
-    }), 'shrub', true),
-  };
+  const mats = forestMaterials();
 
   const clearNoise = new Simplex2(subSeed('forestMask'));
   const R = shoreRange().max;

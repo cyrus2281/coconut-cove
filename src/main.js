@@ -37,6 +37,7 @@ import { buildReef } from './world/reef.js';
 import { buildSealife } from './world/sealife.js';
 import { buildUnderwater } from './world/underwater.js';
 import { Player } from './player.js';
+import { makeAudit } from './debug/audit.js';
 import { buildTouchUI } from './touchui.js';
 import { buildSleep } from './sleep.js';
 import { OceanAudio } from './audio.js';
@@ -526,6 +527,14 @@ window.__beach = {
     return { cluster: [+cl.x.toFixed(1), +cl.z.toFixed(1)], depth: +(-cl.h).toFixed(1) };
   },
   snap() { window.__snapReq = true; }, // grab the next rendered frame to window.__cap
+  // world-invariant audits: audit() for this island, auditMany([seeds]) to
+  // sweep several (regrows each, then restores the current island)
+  ...makeAudit({
+    getSeed, setSeed,
+    rebuild: () => rebuildWorld(),
+    getWorld: () => world,
+    scene,
+  }),
   // lay a test track of prints marching down the beach into the surge zone
   stampLine(az = 1.55) {
     const ox = Math.cos(az), oz = Math.sin(az);
