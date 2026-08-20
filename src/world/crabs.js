@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, shoreRadius } from './island.js';
+import { islandHeight, shoreRadius, beachAz } from './island.js';
 import { runupNow, ZONES } from './swash.js';
 import { subSeed } from '../core/seed.js';
 import { buildCrab } from '../creatures/crab.js';
@@ -45,7 +45,7 @@ export function buildCrabs(player, footprints) {
   const extras = nRand() < 0.55 ? 1 + (nRand() < 0.4 ? 1 : 0) : 0;
   for (let e = 0; e < extras; e++) {
     defs.push({
-      az: nRand() * Math.PI * 2,
+      az: beachAz(nRand, { avoid: defs.map((d) => d.az), sep: 0.35, margin: 0.1 }),
       tint: tint(),
       chir: nRand() < 0.5 ? 1 : -1,
     });
@@ -54,7 +54,13 @@ export function buildCrabs(player, footprints) {
     const def = defs[i];
     const rand = mulberry32(subSeed('crab' + i));
     const parts = buildCrab(def.tint);
-    const start = beachPoint(def.az, 0.1, rand) || { x: 0, z: 0, h: 1 };
+    // fallback: partway down its own home beach ({0,0} is a mountain now)
+    const fbR = shoreRadius(def.az) - 3;
+    const start = beachPoint(def.az, 0.1, rand) || {
+      x: Math.cos(def.az) * fbR,
+      z: Math.sin(def.az) * fbR,
+      h: islandHeight(Math.cos(def.az) * fbR, Math.sin(def.az) * fbR),
+    };
     parts.group.position.set(start.x, start.h + 0.034, start.z);
     group.add(parts.group);
     crabs.push({

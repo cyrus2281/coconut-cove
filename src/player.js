@@ -6,7 +6,7 @@
 // edge of the cove so you can't swim out to sea.
 
 import * as THREE from 'three';
-import { islandHeight, shoreRadius, waterLevelAt } from './world/island.js';
+import { islandHeight, shoreRadius, waterLevelAt, biomeAt } from './world/island.js';
 import { runupNow, runupVel, ZONES } from './world/swash.js';
 import { uniforms } from './core/env.js';
 
@@ -111,6 +111,7 @@ export class Player {
     this.touchMove = new THREE.Vector2();
     this.touchJump = false;
     this.touchDive = false;
+    this.touchRun = false; // latched by the on-screen RUN toggle
     const looks = new Map();
     dom.addEventListener('touchstart', (e) => {
       for (const t of e.changedTouches) {
@@ -199,7 +200,7 @@ export class Player {
       if (k.has('KeyC') || k.has('ControlLeft') || this.touchDive) kick -= 1;
     } else { fwd = 0; strafe = 0; }
 
-    const fast = k.has('ShiftLeft') || k.has('ShiftRight');
+    const fast = k.has('ShiftLeft') || k.has('ShiftRight') || this.touchRun;
     const spd = fast ? SWIM_FAST : SWIM;
 
     // forward follows your gaze once your eyes are under (that's the dive);
@@ -288,7 +289,7 @@ export class Player {
     strafe += this.touchMove.x;
     if (!this.enabled) { fwd = 0; strafe = 0; }
 
-    const running = k.has('ShiftLeft') || k.has('ShiftRight');
+    const running = k.has('ShiftLeft') || k.has('ShiftRight') || this.touchRun;
     const target = running ? RUN : WALK;
 
     const sy = Math.sin(this.yaw), cy = Math.cos(this.yaw);
@@ -394,7 +395,11 @@ export class Player {
         const fx = this.pos.x - mx * 0.24 - mz * lat;
         const fz = this.pos.z - mz * 0.24 + mx * lat;
         const fh = islandHeight(fx, fz);
-        if (this.onStep && fh > waterLevelAt(fx, fz) - 0.06) {
+        // prints press into sand and trail dirt; forest litter and bare
+        // rock don't take them
+        const bio = biomeAt(fx, fz, { h: fh });
+        if (this.onStep && fh > waterLevelAt(fx, fz) - 0.06
+          && bio.w.sand + bio.w.trail > 0.45) {
           this.onStep(fx, fz, fh, mx, mz, this.stepSide);
         }
       }

@@ -7,21 +7,37 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry32, Simplex2 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
-import { islandHeight, islandNormal, shoreRadius, cayCenter, lagoonInfo, lagoonsInfo, lagoonFreeboard } from './island.js';
+import {
+  islandHeight, islandNormal, shoreRadius, cayCenter, lagoonInfo, lagoonsInfo,
+  lagoonFreeboard, isSandyShore, beachAz, coastInfo, summitPos, trailQuery, biomeAt,
+} from './island.js';
 import { shellTexture, barkTexture } from '../core/textures.js';
 import { MeshData, windify } from './palms.js';
 import { figBase } from './fig.js';
 
 let scatterNoise = null; // recreated per island inside buildScatter
+let coastK = 1; // sandy-coastline factor vs the old 47m island, set per build
 
 // where this island's cairn stands — the campfire pitches camp beside it
 let CAIRN_POS = null;
 export function cairnPos() { return CAIRN_POS ? { ...CAIRN_POS } : null; }
 
-// Find a point whose terrain height falls in [hMin, hMax]. A tenth of
-// everything washes up on the offshore cay instead of the main shoreline.
+// How much sandy beach this island has, in multiples of the old island's
+// whole coastline — the drift-line budgets scale with it.
+function measureCoast() {
+  let sandy = 0;
+  const N = 256;
+  for (let i = 0; i < N; i++) {
+    const az = (i / N) * Math.PI * 2;
+    if (isSandyShore(az)) sandy += shoreRadius(az) * (Math.PI * 2 / N);
+  }
+  return THREE.MathUtils.clamp(sandy / 260, 1, 3.4);
+}
+
+// Find a point whose terrain height falls in [hMin, hMax], on a sandy
+// stretch of coast. A tenth of everything washes up on the offshore cay.
 function shorePoint(rand, hMin, hMax, rMin = -12, rMax = 8) {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 90; i++) {
     let x, z;
     if (rand() < 0.1) {
       const c = cayCenter();
@@ -30,7 +46,10 @@ function shorePoint(rand, hMin, hMax, rMin = -12, rMax = 8) {
       x = c.x + Math.cos(a) * rr;
       z = c.z + Math.sin(a) * rr;
     } else {
+      // uniform along the coast, rejecting cliff sectors (a keep-best
+      // beachAz would pile everything into the gap centers)
       const az = rand() * Math.PI * 2;
+      if (!isSandyShore(az)) continue;
       const r = shoreRadius(az) + rMin + rand() * (rMax - rMin);
       x = Math.cos(az) * r;
       z = Math.sin(az) * r;
@@ -170,10 +189,10 @@ function placeShells(group) {
   const tints = SHELL_TINTS.map((t) => new THREE.Color(t[0], t[1], t[2]));
 
   const kinds = [
-    { geo: spiralShellGeometry(2.6, 1.35), count: 70, s: [0.045, 0.11], lay: true },
-    { geo: spiralShellGeometry(3.4, 2.3), count: 44, s: [0.04, 0.08], lay: true }, // auger
-    { geo: scallopGeometry(), count: 95, s: [0.05, 0.12], lay: false },
-    { geo: clamGeometry(), count: 75, s: [0.05, 0.1], lay: false },
+    { geo: spiralShellGeometry(2.6, 1.35), count: Math.round(70 * coastK), s: [0.045, 0.11], lay: true },
+    { geo: spiralShellGeometry(3.4, 2.3), count: Math.round(44 * coastK), s: [0.04, 0.08], lay: true }, // auger
+    { geo: scallopGeometry(), count: Math.round(95 * coastK), s: [0.05, 0.12], lay: false },
+    { geo: clamGeometry(), count: Math.round(75 * coastK), s: [0.05, 0.1], lay: false },
   ];
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
@@ -211,7 +230,7 @@ function placeShells(group) {
   // starfish
   const starMat = starfishMaterial();
   const starGeo = starfishGeometry();
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < Math.round(3 * coastK); i++) {
     const p = shorePoint(rand, -0.6, 0.25);
     if (!p) continue;
     const mesh = new THREE.Mesh(starGeo, starMat);
@@ -241,7 +260,7 @@ export function pebbleAssets() {
 
 function placePebbles(group) {
   const rand = mulberry32(subSeed('pebbles'));
-  const COUNT = 1700;
+  const COUNT = Math.round(1700 * coastK);
   const { geo, mat, shades } = pebbleAssets();
   const inst = new THREE.InstancedMesh(geo, mat, COUNT);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(),
@@ -306,17 +325,31 @@ function placeRocks(group) {
   const noise = new Simplex2(subSeed('rockShape'));
   const rockMat = boulderMaterial();
 
+  // the wading outcrop looks for the cliffiest bearing it can find (rocks
+  // belong under rock coasts); the smaller clusters take sandy beaches.
+  // The old build hard-coded three azimuths tuned to a 47m shoreline.
+  let outAz = 0, outK = -1;
+  for (let i = 0; i < 24; i++) {
+    const a = rand() * Math.PI * 2;
+    const k = coastInfo(a).cliffK;
+    if (k > outK) { outK = k; outAz = a; }
+  }
+  const pairAz = beachAz(rand, { margin: 0.1 });
+  const lonerAz = beachAz(rand, { margin: 0.1, avoid: [pairAz], sep: 0.7 });
   const clusters = [
-    { az: 3.55, d: 0.5, sizes: [2.0, 1.3, 0.85, 0.5] },  // outcrop wading into the sea
-    { az: 5.3, d: -14, sizes: [1.1, 0.65] },              // inland pair
-    { az: 1.95, d: -5, sizes: [0.7] },                    // half-buried loner on the beach
+    { az: outAz, d: 0.5, sizes: [2.0, 1.3, 0.85, 0.5] }, // outcrop wading into the sea
+    { az: pairAz, d: -14, sizes: [1.1, 0.65] },          // inland pair
+    { az: lonerAz, d: -5, sizes: [0.7] },                // half-buried loner
   ];
 
   for (const cl of clusters) {
     let r0 = shoreRadius(cl.az) + cl.d;
-    // boulders don't stand in the lagoon — walk them back toward the beach
+    // boulders stand clear of the lagoon and the footpath — walk them
+    // back toward the beach
     for (let g = 0; g < 10; g++) {
-      if (lagoonFreeboard(Math.cos(cl.az) * r0, Math.sin(cl.az) * r0) >= 0.6) break;
+      const px = Math.cos(cl.az) * r0, pz = Math.sin(cl.az) * r0;
+      const tq = trailQuery(px, pz);
+      if (lagoonFreeboard(px, pz) >= 0.6 && (!tq || tq.d > 2.5)) break;
       r0 += 2.2;
     }
     let cx = Math.cos(cl.az) * r0, cz = Math.sin(cl.az) * r0;
@@ -358,9 +391,12 @@ export function driftwoodMaterial() {
 function placeDriftwood(group) {
   const rand = mulberry32(subSeed('driftwood'));
   const mat = driftwoodMaterial();
+  // storm-cast spars strand on the beaches, never against a cliff
+  const az1 = beachAz(rand, { margin: 0.1 });
+  const az2 = beachAz(rand, { margin: 0.1, avoid: [az1], sep: 0.9 });
   const logs = [
-    { az: 2.2, d: -4.5, len: 3.4, r: 0.16 },
-    { az: 0.55, d: -3.8, len: 2.3, r: 0.12 },
+    { az: az1, d: -4.5, len: 3.4, r: 0.16 },
+    { az: az2, d: -3.8, len: 2.3, r: 0.12 },
   ];
   for (const l of logs) {
     const shore = shoreRadius(l.az) + l.d;
@@ -383,18 +419,40 @@ function placeDriftwood(group) {
 function placeGrass(group) {
   const rand = mulberry32(subSeed('grass'));
   const data = new MeshData();
+
+  // dune grass: the beach apron and dune crests, as it always was
   let tufts = 0;
-  for (let attempt = 0; attempt < 6000 && tufts < 400; attempt++) {
+  for (let attempt = 0; attempt < 7000 && tufts < 380; attempt++) {
     const az = rand() * Math.PI * 2;
-    const r = rand() * (shoreRadius(az) - 6);
+    if (!isSandyShore(az)) continue;
+    const r = shoreRadius(az) - 4 - rand() * 34;
     const x = Math.cos(az) * r, z = Math.sin(az) * r;
     const h = islandHeight(x, z);
-    if (h < 2.2) continue;
+    if (h < 1.9) continue;
     if (lagoonFreeboard(x, z) < 0.1) continue; // not in the pond — reeds go there
     if (scatterNoise.noise(x * 0.055, z * 0.055) < 0.02) continue;
     tufts++;
     grassTuft(data, x, z, rand);
   }
+
+  // meadow grass: greener, taller tufts scattered through the interior
+  // lowlands and up the heathy shoulders (the forest brings its own floor)
+  let meadow = 0;
+  for (let attempt = 0; attempt < 9000 && meadow < 480; attempt++) {
+    const az = rand() * Math.PI * 2;
+    const r = Math.sqrt(rand()) * (shoreRadius(az) - 40);
+    const x = Math.cos(az) * r, z = Math.sin(az) * r;
+    const bio = biomeAt(x, z);
+    if (bio.kind !== 'meadow' && bio.w.forest < 0.25) continue;
+    if (bio.h > 30) continue;
+    if (lagoonFreeboard(x, z) < 0.1) continue;
+    const tq = trailQuery(x, z);
+    if (tq && tq.d < 1.4) continue;
+    if (scatterNoise.noise(x * 0.05 + 31, z * 0.05) < -0.1) continue;
+    meadow++;
+    grassTuft(data, x, z, rand, islandHeight, { tall: 1.45, green: 1.5 });
+  }
+
   const mesh = new THREE.Mesh(data.build(), grassMaterial());
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -404,7 +462,9 @@ function placeGrass(group) {
 // One tuft of dune grass: a couple of dozen creased blades leaning off a
 // common root, written into a shared wind-flexed mesh. `ground` says where
 // the sand is under each blade.
-export function grassTuft(data, x, z, rand, ground = islandHeight) {
+export function grassTuft(data, x, z, rand, ground = islandHeight, style = {}) {
+  const tall = style.tall || 1;
+  const green = style.green || 1;
   const blades = 14 + Math.floor(rand() * 9);
   const phase = rand() * Math.PI * 2;
   for (let b = 0; b < blades; b++) {
@@ -412,7 +472,7 @@ export function grassTuft(data, x, z, rand, ground = islandHeight) {
     const off = rand() * 0.16;
     const bx = x + Math.cos(a) * off, bz = z + Math.sin(a) * off;
     const by = ground(bx, bz) - 0.02;
-    const hgt = 0.22 + rand() * 0.45;
+    const hgt = (0.22 + rand() * 0.45) * tall;
     const lean = 0.15 + rand() * 0.35;
     const la = rand() * Math.PI * 2;
     const dirx = Math.cos(la) * lean, dirz = Math.sin(la) * lean;
@@ -424,7 +484,11 @@ export function grassTuft(data, x, z, rand, ground = islandHeight) {
       const px = bx + dirx * t * t * hgt, pz = bz + dirz * t * t * hgt;
       const py = by + hgt * t * (1 - lean * 0.35 * t);
       const w = w0 * (1 - t * 0.95);
-      const col = [0.34 * g0 + t * 0.2, 0.36 * g0 + t * 0.16, 0.14 * g0 + t * 0.08];
+      const col = [
+        (0.34 * g0 + t * 0.2) / (0.55 + green * 0.45),
+        (0.36 * g0 + t * 0.16) * (0.7 + green * 0.3),
+        (0.14 * g0 + t * 0.08) / (0.7 + green * 0.3),
+      ];
       const fl = t * t * 0.55;
       const sideA = Math.cos(la + Math.PI / 2) * w, sideB = Math.sin(la + Math.PI / 2) * w;
       rows.push([
@@ -448,22 +512,27 @@ export function grassMaterial() {
 // long dead — the island's one hint of a "before".
 function placeWreck(group) {
   const rand = mulberry32(subSeed('wreck'));
-  const L = lagoonInfo();
   const fb = figBase();
 
-  // a dune saddle: inland, dry, clear of the pond and the big tree
-  let site = null;
-  for (let tries = 0; tries < 80; tries++) {
-    const az = rand() * Math.PI * 2;
+  // a dune saddle: inland, dry, on beach sand, clear of the pond, the big
+  // tree and the footpath. Keep-best — the island always keeps its wreck.
+  let site = null, bestScore = -Infinity;
+  for (let tries = 0; tries < 90; tries++) {
+    const az = beachAz(rand, { margin: 0.08 });
     const d = 9 + rand() * 8;
     const r = shoreRadius(az) - d;
     const x = Math.cos(az) * r, z = Math.sin(az) * r;
     const h = islandHeight(x, z);
-    if (h < 2.4 || h > 4.6) continue;
-    if (lagoonFreeboard(x, z) < 1.0) continue;
-    if (fb && Math.hypot(x - fb.x, z - fb.z) < 12) continue;
-    site = { x, z, h };
-    break;
+    const bio = biomeAt(x, z, { h });
+    const tq = trailQuery(x, z);
+    let score = -Math.abs(h - 3.5);
+    if (h < 1.4 || h > 5.6) score -= 8;
+    if (bio.w.sand < 0.5) score -= 6;
+    if (lagoonFreeboard(x, z) < 1.0) score -= 20;
+    if (tq && tq.d < 4) score -= 10;
+    if (fb && Math.hypot(x - fb.x, z - fb.z) < 12) score -= 10;
+    if (score > bestScore) { bestScore = score; site = { x, z, h }; }
+    if (score > -1.1) break; // a clean dune saddle: take it
   }
   if (!site) return;
 
@@ -540,17 +609,20 @@ export function wreckMaterial() {
   });
 }
 
-// A walker's cairn on the summit, ringed by a little circle of pale pebbles.
+// A walker's cairn on the summit shelf, ringed by pale pebbles — the top
+// of the trail, standing where the whole island is the view.
 function placeCairn(group) {
   const rand = mulberry32(subSeed('cairn'));
   const noise = new Simplex2(subSeed('cairnShape'));
   const fb = figBase();
 
-  // highest dry interior point, nudged off the fig's toes
+  // the highest spot on the guaranteed-flat summit shelf, kept a step off
+  // the shelf center so the trail's arrival stays clear
+  const s = summitPos();
   let best = null;
-  for (let i = 0; i < 240; i++) {
-    const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * 14;
-    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+  for (let i = 0; i < 40; i++) {
+    const a = rand() * Math.PI * 2, rr = 1.5 + Math.sqrt(rand()) * 4.5;
+    const x = s.x + Math.cos(a) * rr, z = s.z + Math.sin(a) * rr;
     const h = islandHeight(x, z);
     if (lagoonFreeboard(x, z) < 0.8) continue;
     if (fb && Math.hypot(x - fb.x, z - fb.z) < 6.5) continue;
@@ -715,7 +787,7 @@ export function reedMaterial() {
 function placeSeaweed(group) {
   const rand = mulberry32(subSeed('seaweed'));
   const data = new MeshData();
-  for (let c = 0; c < 14; c++) {
+  for (let c = 0; c < Math.round(14 * coastK); c++) {
     const p = shorePoint(rand, -0.15, 0.5);
     if (!p) continue;
     seaweedClump(data, p.x, p.z, rand);
@@ -765,6 +837,7 @@ export function seaweedMaterial() {
 
 export function buildScatter() {
   scatterNoise = new Simplex2(subSeed('drift'));
+  coastK = measureCoast(); // more sandy coastline → more drift-line dressing
   const group = new THREE.Group();
   group.name = 'scatter';
   placeShells(group);

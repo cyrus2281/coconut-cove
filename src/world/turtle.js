@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { mulberry32 } from '../core/rng.js';
 import { subSeed } from '../core/seed.js';
 import { uniforms } from '../core/env.js';
-import { islandHeight, islandNormal, shoreRadius } from './island.js';
+import { islandHeight, islandNormal, shoreRadius, isSandyShore } from './island.js';
 import { buildTurtleMesh } from '../creatures/turtle.js';
 
 // sand kicked by the rear flippers while digging
@@ -60,8 +60,9 @@ export function buildTurtle(player, footprints, tag = '') {
 
   // a beach with a clear waterline-to-dune run: h reaches +0.9 within ~26m
   function pickNestSite() {
-    for (let tries = 0; tries < 20; tries++) {
+    for (let tries = 0; tries < 28; tries++) {
       const az = rand() * Math.PI * 2;
+      if (!isSandyShore(az)) continue; // she hauls out on sand, never rock
       let ok = null;
       // above the worst-case high-tide surge reach, below the dune tops
       for (let r = shoreRadius(az) + 2; r > shoreRadius(az) - 26; r -= 0.7) {
